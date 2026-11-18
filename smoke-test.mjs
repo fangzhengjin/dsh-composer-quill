@@ -1027,6 +1027,36 @@ check('the short-draft prompt names the chosen language and the conversation', (
   assert.ok(prompt.includes('Chinese'), 'language missing')
 })
 
+check('the store keeps recent results of every kind, with their mode', () => {
+  const { saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions } = moduleExports.__test
+  window.localStorage.clear()
+  window.localStorage.removeItem('dsh.composer-quill.epoch')
+
+  const session = 's-store'
+  saveSuggestion(session, 'compose', '帮我把日志', ['帮我把日志按时间排序'], '12', 'append')
+  saveSuggestion(session, 'compose', '帮我把这段日志整理', ['帮我把这段日志整理一下，按时间顺序，并标出错误行'], '12', 'full')
+  saveSuggestion(session, 'next', '', ['先看第 42 行', '把完整堆栈贴出来'], '12', 'full')
+
+  const map = readSuggestions()
+  const modes = Object.values(map).map((entry) => entry.mode).sort()
+  assert.deepEqual(modes, ['append', 'full', 'full'], JSON.stringify(modes))
+
+  // All three kinds come back for the same conversation state.
+  assert.deepEqual(loadSuggestion(session, 'compose', '帮我把日志', '12'), ['帮我把日志按时间排序'])
+  assert.deepEqual(loadSuggestion(session, 'compose', '帮我把这段日志整理', '12'), ['帮我把这段日志整理一下，按时间顺序，并标出错误行'])
+  assert.equal(loadSuggestion(session, 'next', '', '12')?.length, 2)
+
+  // The cap keeps the newest entries.
+  for (let index = 0; index < 80; index += 1) {
+    saveSuggestion(session, 'compose', `草稿 ${index}`, [`结果 ${index}`], '12', 'append')
+  }
+  const after = Object.keys(readSuggestions()).length
+  assert.ok(after <= 60, 'store grew to ' + after)
+  assert.deepEqual(loadSuggestion(session, 'compose', '草稿 79', '12'), ['结果 79'], 'the newest entry survives')
+  clearSessionSuggestions(session)
+  assert.equal(Object.keys(readSuggestions()).length, 0)
+})
+
 check('the turn counter is the decidable part of "identical"', () => {
   const { epochOf, bumpEpoch, syncEpoch, saveSuggestion, loadSuggestion } = moduleExports.__test
   window.localStorage.removeItem('dsh.composer-quill.epoch')

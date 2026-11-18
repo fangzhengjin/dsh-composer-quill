@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.28.0'
+    const BUILD = '0.29.0'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -488,7 +488,9 @@ const COVERED_DEBOUNCE_MS = 1200
     // The key carries the Session and the turn counter, so "unchanged" is decidable
     // without a clock. Expiry only guards storage; the 40-entry cap bounds it.
     const SUGGEST_TTL_MS = 24 * 60 * 60_000
-    const SUGGEST_MAX = 40
+    // A rolling list of the most recent results: three kinds per draft (a tail, a
+    // rewrite, a next message) across a handful of drafts.
+    const SUGGEST_MAX = 60
 
     // Parsing this map on every keystroke was measurable; comparing the raw
     // string keeps the parse rare while still noticing another tab's writes.
@@ -545,10 +547,17 @@ const COVERED_DEBOUNCE_MS = 1200
       return `${sessionId ?? ''}|${kind}|${draft ?? ''}|${epoch}`
     }
 
-    function saveSuggestion(sessionId, kind, draft, items, version = '') {
+    function saveSuggestion(sessionId, kind, draft, items, version = '', mode = '') {
       if (sessionId === null || !Array.isArray(items) || items.length === 0) return
       const map = readSuggestions()
-      map[suggestionKey(sessionId, kind, draft, syncEpoch(sessionId))] = { items, at: Date.now(), version: String(version ?? '') }
+      map[suggestionKey(sessionId, kind, draft, syncEpoch(sessionId))] = {
+        items,
+        at: Date.now(),
+        version: String(version ?? ''),
+        // 'append' for a tail, 'full' for a rewrite or a next message: the display
+        // derives it anyway, but storing it keeps the record self-describing.
+        mode: mode === 'append' || mode === 'full' ? mode : '',
+      }
       const keys = Object.keys(map)
       if (keys.length > SUGGEST_MAX) {
         keys
@@ -1427,7 +1436,7 @@ const COVERED_DEBOUNCE_MS = 1200
                 // only the JSON fallback would ever be reused.
                 const settled = ghost.getSnapshot()
                 if (settled.kind === 'compose' && settled.items.length > 0) {
-                  saveSuggestion(settled.sessionId, 'compose', settled.forDraft, settled.items, `${historyRef.current.items.length}`)
+                  saveSuggestion(settled.sessionId, 'compose', settled.forDraft, settled.items, `${historyRef.current.items.length}`, settled.mode)
                 }
               },
               error: (data) => {
@@ -1438,7 +1447,7 @@ const COVERED_DEBOUNCE_MS = 1200
               json: (body) => {
                 const items = rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
                 ghost.settle(live.sessionId, active, 'compose', draftNow, items)
-                saveSuggestion(live.sessionId, 'compose', draftNow, items, `${historyRef.current.items.length}`)
+                saveSuggestion(live.sessionId, 'compose', draftNow, items, `${historyRef.current.items.length}`, typeof body?.mode === 'string' ? body.mode : '')
               },
             }).catch((error) => {
               if (active.signal.aborted) return
@@ -1478,7 +1487,7 @@ const COVERED_DEBOUNCE_MS = 1200
                 ? (Array.isArray(body?.candidates) ? body.candidates : [])
                 : rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
               ghost.settle(live.sessionId, active, kind, draftNow, items)
-              saveSuggestion(live.sessionId, kind, draftNow, items, `${historyRef.current.items.length}`)
+              saveSuggestion(live.sessionId, kind, draftNow, items, `${historyRef.current.items.length}`, kind === 'next' ? 'full' : '')
             }, (error) => {
               if (active.signal.aborted) return
               if (error?.status === 409) {
@@ -2208,9 +2217,11 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
+
 
 
 

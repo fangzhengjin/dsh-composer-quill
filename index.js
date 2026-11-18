@@ -1038,6 +1038,8 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch }, r
     )
     const hit = cached(key)
     if (hit !== undefined) {
+      // "Nothing changed" is now the normal case: record it so the reuse is visible.
+      trace('cache-hit', { sessionId, mode: 'compose', kind: hit.kind ?? null, negative: typeof hit.text !== 'string' })
       replayCompose(send, hit, cleanDraft)
       res.end()
       return
@@ -1302,7 +1304,10 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0 
     epoch,
   )
   const hit = cached(key)
-  if (hit !== undefined) return hit
+  if (hit !== undefined) {
+    trace('cache-hit', { sessionId, mode: kind, kind: hit.kind ?? null, negative: typeof hit.text !== 'string' })
+    return hit
+  }
 
   // The browser retries, the safety net and typing jitter can all land on the
   // same draft at once; one model call is enough for all of them.
