@@ -66,6 +66,8 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.mode.manual': '仅手动',
       'settings.debounce': '停顿（毫秒）',
       'settings.timeout': '超时（毫秒）',
+      'settings.language': '语言',
+      'settings.language.auto': '跟随系统',
       'settings.learning': '采纳反馈',
       'settings.learningEmpty': '还没有样本（Tab 采纳 / Esc 忽略都会计入）',
       'settings.manualHint': '手动触发：Ctrl+Shift+Space',
@@ -87,6 +89,8 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.mode.manual': 'Manual only',
       'settings.debounce': 'Pause (ms)',
       'settings.timeout': 'Timeout (ms)',
+      'settings.language': 'Language',
+      'settings.language.auto': 'Follow system',
       'settings.learning': 'Acceptance feedback',
       'settings.learningEmpty': 'no samples yet (Tab accepts, Esc dismisses)',
       'settings.manualHint': 'Trigger manually: Ctrl+Shift+Space',
@@ -122,7 +126,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const response = await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ ...payload, locale: browserLocale() }),
+        body: JSON.stringify({ ...payload, locale: browserLocale(), language: currentConfig().language }),
         signal,
         credentials: 'same-origin',
       })
@@ -198,7 +202,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const response = await fetch(path, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ ...payload, locale: browserLocale() }),
+        body: JSON.stringify({ ...payload, locale: browserLocale(), language: currentConfig().language }),
         signal,
         credentials: 'same-origin',
       })
@@ -427,6 +431,7 @@ const COVERED_DEBOUNCE_MS = 1200
     const DEFAULT_CONFIG = Object.freeze({
       enabled: true,
       mode: 'auto',        // 'auto' | 'manual'
+    language: 'auto',    // 'auto' (follow the system) | 'zh' | 'en'
       debounceMs: COMPOSE_DEBOUNCE_MS,
       timeoutMs: 20000,
     })
@@ -442,8 +447,18 @@ const COVERED_DEBOUNCE_MS = 1200
       return {
         enabled: source.enabled !== false,
         mode: source.mode === 'manual' ? 'manual' : 'auto',
+      language: source.language === 'zh' || source.language === 'en' ? source.language : 'auto',
         debounceMs: clamp(source.debounceMs, 80, 2000, DEFAULT_CONFIG.debounceMs),
         timeoutMs: clamp(source.timeoutMs, 3000, 60000, DEFAULT_CONFIG.timeoutMs),
+      }
+    }
+
+    /** The configuration in force right now (storage is the source of truth). */
+    function currentConfig() {
+      try {
+        return readConfig()
+      } catch {
+        return { ...DEFAULT_CONFIG }
       }
     }
 
@@ -1983,6 +1998,17 @@ const COVERED_DEBOUNCE_MS = 1200
         },
         h('option', { value: 'auto' }, t('settings.mode.auto')),
         h('option', { value: 'manual' }, t('settings.mode.manual'))),
+        h('span', { style: labelStyle }, t('settings.language')),
+        h('select', {
+          'data-composer-quill': 'settings-language',
+          value: settings.language,
+          disabled: !enabled,
+          onChange: (event) => config.set({ language: event.target.value }),
+          style: fieldStyle,
+        },
+        h('option', { value: 'auto' }, `${t('settings.language.auto')}（${browserLocale() || 'zh'}）`),
+        h('option', { value: 'zh' }, '中文'),
+        h('option', { value: 'en' }, 'English')),
         h('span', { style: labelStyle }, t('settings.debounce')),
         h('input', {
           'data-composer-quill': 'settings-debounce',

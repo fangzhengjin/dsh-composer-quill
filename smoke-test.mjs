@@ -228,6 +228,34 @@ check('a two-character draft never gets a fragment tail', () => {
   assert.equal(rewrite?.mode, 'full')
 })
 
+check('the language setting overrides every heuristic', () => {
+  const { resolveLanguage, rankCandidates, wrongLanguage } = host.__test
+
+  // A chosen language beats the profile, the locale and the draft.
+  assert.equal(resolveLanguage({ profile: { language: 'en' }, locale: 'en-US', forced: 'zh' }), 'zh')
+  assert.equal(resolveLanguage({ profile: { language: 'zh' }, locale: 'zh-CN', forced: 'en' }), 'en')
+  // 'auto' falls back to the old chain.
+  assert.equal(resolveLanguage({ profile: { language: 'zh' }, locale: 'en-US', forced: '' }), 'zh')
+
+  // Forced: an English answer is dropped and the list stays empty (the user asked
+  // for that language, so silence is honest).
+  const forcedZh = rankCandidates(
+    ['Skip the rest and paste the trace.', 'Let me rerun the suite first.'],
+    { profile: { count: 0 }, locale: 'zh-CN', forced: 'zh' },
+  )
+  assert.deepEqual(forcedZh, [])
+
+  // Inferred: the same list still shows something.
+  const autoZh = rankCandidates(
+    ['Skip the rest and paste the trace.', 'Let me rerun the suite first.'],
+    { profile: { count: 0 }, locale: 'zh-CN', forced: '' },
+  )
+  assert.ok(autoZh.length > 0)
+
+  // A Chinese draft with an English tail is refused when Chinese is forced.
+  assert.equal(wrongLanguage(' and make it deterministic.', 'zh'), true)
+})
+
 check('the language gate holds even without a transcript', () => {
   const { resolveLanguage, wrongLanguage, rankCandidates, parseComposeReply } = host.__test
 
@@ -643,9 +671,11 @@ check('hydrate shows a stored suggestion without a request', () => {
 
 check('normalizeConfig clamps and defaults every field', () => {
   const { normalizeConfig } = moduleExports.__test
-  assert.deepEqual(normalizeConfig(null), { enabled: true, mode: 'auto', debounceMs: 250, timeoutMs: 20000 })
+  assert.deepEqual(normalizeConfig(null), { enabled: true, mode: 'auto', language: 'auto', debounceMs: 250, timeoutMs: 20000 })
+  assert.equal(normalizeConfig({ language: 'zh' }).language, 'zh')
+  assert.equal(normalizeConfig({ language: 'klingon' }).language, 'auto')
   assert.deepEqual(normalizeConfig({ enabled: false, mode: 'manual', debounceMs: 9999, timeoutMs: 10 }),
-    { enabled: false, mode: 'manual', debounceMs: 2000, timeoutMs: 3000 })
+    { enabled: false, mode: 'manual', language: 'auto', debounceMs: 2000, timeoutMs: 3000 })
   assert.deepEqual(normalizeConfig({ mode: 'nonsense', debounceMs: 'abc' }).mode, 'auto')
   assert.equal(normalizeConfig({ debounceMs: '150' }).debounceMs, 150)
 })
