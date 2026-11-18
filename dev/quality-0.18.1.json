@@ -1,0 +1,32 @@
+[
+ {
+  "draft": "帮我把这段日志",
+  "elapsed": 1.7,
+  "chip": "按 Tab 补全：分析一下，重点看有没有报错和异常堆栈。",
+  "ghost": "分析一下，重点看有没有报错和异常堆栈。"
+ },
+ {
+  "draft": "这个报错是因为什么",
+  "elapsed": 1.7,
+  "chip": "按 Tab 补全：？需要怎么修改。",
+  "ghost": "？需要怎么修改。"
+ },
+ {
+  "draft": "帮我写个脚本把昨天导出的 csv 按时间排序然后",
+  "elapsed": 1.1,
+  "chip": "按 Tab 补全：输出到新的 csv 文件里。",
+  "ghost": "输出到新的 csv 文件里。"
+ },
+ {
+  "draft": "请把上面的结论整理成三条要点",
+  "elapsed": 3.6,
+  "chip": "按 Tab 补全：按重要性从高到低排序。",
+  "ghost": "按重要性从高到低排序。"
+ },
+ {
+  "draft": "fix the flaky test in the auth module",
+  "elapsed": 2.7,
+  "chip": "按 Tab 补全： Show me the root cause and the diff.",
+  "ghost": " Show me the root cause and the diff."
+ }
+]

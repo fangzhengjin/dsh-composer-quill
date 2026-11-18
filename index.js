@@ -329,9 +329,13 @@ function styleProfile(events) {
   if (recent.length === 0) return { count: 0 }
   const lengths = recent.map((text) => Array.from(text).length)
   const average = Math.round(lengths.reduce((sum, value) => sum + value, 0) / lengths.length)
+  // Aggregate share over the whole window: a handful of identifiers inside
+  // Chinese sentences used to tip the profile to "en", which then dropped every
+  // Chinese candidate (a real outage).
   const cjk = recent.join('').match(/[\u3000-\u9fff]/g)?.length ?? 0
   const latin = recent.join('').match(/[A-Za-z]/g)?.length ?? 0
-  const language = cjk > latin * 2 ? 'zh' : latin > cjk * 2 ? 'en' : 'mixed'
+  const share = cjk + latin === 0 ? 0 : latin / (cjk + latin)
+  const language = share > 0.6 ? 'en' : share < 0.2 ? 'zh' : 'mixed'
   const greetings = /^(好的|好(?=[，,！!=\s]|$)|嗯|谢谢|收到|ok|okay|sure|hi|hello|thanks)(?:[，,。.!！?：:\s]|$)/i
   return {
     count: recent.length,
@@ -404,8 +408,9 @@ function wrongLanguage(text, language) {
   if (Array.from(value).length < 6) return false
   const share = latinShareOf(value)
   // Chinese users may paste identifiers, but a mostly-Latin sentence is English.
-  if (language === 'zh') return share > 0.65
-  return share < 0.35
+  // Wide margin only: misjudging the user's language must never empty the list.
+  if (language === 'zh') return share > 0.75
+  return share < 0.2
 }
 
 const GREETING_RE = /^(好的|好[，,！!]|嗯|哦|收到|没问题|ok|okay|sure|got it|thanks|thank you)\b/i
@@ -454,9 +459,14 @@ function rankCandidates(candidates, { profile = {}, lastAssistant = '', lastUser
   scored.sort((left, right) => right.score - left.score)
   const ordered = scored.map((entry) => entry.text)
   if (ordered.length > 0) return ordered
-  // Everything was dropped for its language: an empty list is better than a
-  // suggestion in the wrong language.
-  if (droppedForLanguage > 0) return []
+  // Everything was dropped for its language. Silence is worse than a suggestion
+  // in the "wrong" language — that judgement is only a heuristic.
+  if (droppedForLanguage > 0) {
+    return (Array.isArray(candidates) ? candidates : [])
+      .map((raw) => (typeof raw === 'string' ? raw.trim() : ''))
+      .filter((text) => text !== '' && !looksLikeMeta(text))
+      .slice(0, 3)
+  }
   // Every candidate was filtered out. Showing nothing is worse than showing the
   // model's raw answer: keep the first few, trimmed, without the filters.
   return (Array.isArray(candidates) ? candidates : [])

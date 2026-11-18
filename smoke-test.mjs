@@ -241,12 +241,19 @@ check('the language gate holds even without a transcript', () => {
   assert.equal(wrongLanguage('把日志贴上来，我看一下', 'zh'), false)
   assert.equal(wrongLanguage('OK', 'zh'), false, 'very short replies are tolerated')
 
-  // Candidates in the wrong language are dropped, and not resurrected by the fallback.
+  // The wrong-language candidates lose to the right-language one...
   const ranked = rankCandidates(
+    ['Skip the rest and paste the trace.', '把剩下的日志贴上来我看一下'],
+    { profile: { count: 0 }, locale: 'zh-CN' },
+  )
+  assert.equal(ranked[0], '把剩下的日志贴上来我看一下', JSON.stringify(ranked))
+  // ...but an all-English answer is still shown: a heuristic must never leave
+  // the user with silence (that outage is exactly what happened in 0.17.1).
+  const onlyEnglish = rankCandidates(
     ['Skip the rest and paste the trace.', 'Let me rerun the suite first.'],
     { profile: { count: 0 }, locale: 'zh-CN' },
   )
-  assert.deepEqual(ranked, [])
+  assert.ok(onlyEnglish.length > 0, 'silence is worse than the wrong language')
 
   // A Chinese draft cannot be finished in English, locale or not.
   assert.equal(parseComposeReply(' and make it deterministic.', '帮我修一下这个测试'), null)
