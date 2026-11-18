@@ -1179,6 +1179,62 @@ check('streaming frames arrive in order and end with done', async () => {
   }
 }
 
+// A finished turn must invalidate the Host cache even when its transcript lags.
+{
+  let calls = 0
+  const session = {
+    id: 's-epoch',
+    // A host whose snapshot never grows: the epoch is the only thing that changes.
+    snapshotEvents: () => ([
+      { type: 'user/message', seq: 0, data: { content: [{ type: 'text', text: '帮我看下这个报错' }] } },
+      { type: 'assistant/message', seq: 1, data: { message: { content: [{ type: 'text', text: '先贴日志。' }] } } },
+    ]),
+    requestHeader: () => ({ config: { provider: 'p', model: 'm' } }),
+  }
+  const routes = {}
+  const ctx = {
+    agents: { get: () => ({ session }) },
+    llm: {
+      async *stream() {
+        calls += 1
+        yield { type: 'text-delta', text: '{"candidates":["再看下第 3 个报错"]}' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+    inject: (_deps, callback) => callback({
+      effect: (fn) => { fn(); return () => {} },
+      on: () => {},
+      webServer: { register: (route) => { routes[route.path] = route; return () => {} } },
+      clientModules: { clientPath: () => '/tmp/x.js', graph: () => ({ entries: [] }) },
+    }),
+  }
+  host.apply(ctx)
+  const call = (epoch) => new Promise((resolve) => {
+    const req = new EventEmitter()
+    req.method = 'POST'
+    req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
+    const res = new EventEmitter()
+    res.statusCode = 0
+    res.writableEnded = false
+    res.destroyed = false
+    res.setHeader = () => {}
+    res.end = (chunk) => resolve(JSON.parse(String(chunk)))
+    routes['/composer-quill/predict'].handler(req, res)
+    req.emit('data', Buffer.from(JSON.stringify({ sessionId: 's-epoch', mode: 'next', draft: '', epoch })))
+    req.emit('end')
+  })
+  await checkAsync('a new turn is never served from the previous turn cache', async () => {
+    await call(4)
+    const afterFirst = calls
+    await call(5)
+    assert.ok(calls > afterFirst, 'model calls stayed at ' + calls)
+    // Same epoch still reuses the answer.
+    const before = calls
+    await call(5)
+    assert.equal(calls, before, 'same turn should reuse the cached candidates')
+  })
+}
+
 // The language setting changes no Session event, so it must be part of the cache key.
 {
   let calls = 0

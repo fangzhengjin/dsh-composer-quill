@@ -802,14 +802,14 @@ function eventsOf(session) {
   return best
 }
 
-function cacheKey(sessionId, mode, draft, events, route, language = '') {
+function cacheKey(sessionId, mode, draft, events, route, language = '', epoch = 0) {
   const last = Array.isArray(events) && events.length > 0 ? events[events.length - 1] : null
   // Switching the model produces no Session event: without the route in the key
   // an answer from the previous model would be replayed for up to two minutes.
   const model = route === undefined ? '' : `${route.provider}/${route.model}`
   // The language setting changes no Session event, so it has to be part of the
   // key: without it a suggestion produced for one language is replayed for another.
-  return `${sessionId}|${mode}|${draft}|${Array.isArray(events) ? events.length : 0}|${last?.seq ?? ''}|${model}|${language}`
+  return `${sessionId}|${mode}|${draft}|${Array.isArray(events) ? events.length : 0}|${last?.seq ?? ''}|${model}|${language}|${epoch}`
 }
 
 function cached(key) {
@@ -979,7 +979,7 @@ function sseWriter(res) {
  * so the ghost starts growing in a few hundred milliseconds instead of after
  * the whole call. Frames: start, delta, retract, final, done, error.
  */
-async function composeStream(ctx, { sessionId, draft, locale, forced }, res, signal) {
+async function composeStream(ctx, { sessionId, draft, locale, forced, epoch }, res, signal) {
   // Validate before any header is flushed: afterwards the status is fixed at 200
   // and the browser can no longer tell "not live" from "model failed".
   {
@@ -1018,6 +1018,7 @@ async function composeStream(ctx, { sessionId, draft, locale, forced }, res, sig
       events,
       routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx),
       resolveLanguage({ locale, forced }),
+      epoch,
     )
     const hit = cached(key)
     if (hit !== undefined) {
@@ -1262,7 +1263,7 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
  * finishes and tidies what the user is typing.
  * @returns a mode-appropriate result object.
  */
-async function predict(ctx, { sessionId, draft, mode, locale, forced }, signal) {
+async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0 }, signal) {
   signal.throwIfAborted()
   const agent = ctx.agents.get(sessionId)
   if (agent === null || agent === undefined) throw httpError('Session is not live in this Host', 409)
@@ -1282,6 +1283,7 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced }, signal) 
     events,
     routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx),
     resolveLanguage({ locale, forced }),
+    epoch,
   )
   const hit = cached(key)
   if (hit !== undefined) return hit
@@ -1524,6 +1526,9 @@ async function handlePredict(ctx, token, req, res) {
     const locale = typeof body?.locale === 'string' ? body.locale.slice(0, 24) : ''
     // The user picked a language in settings: it overrides every heuristic.
     const forced = body?.language === 'zh' || body?.language === 'en' ? body.language : ''
+    // A monotonically increasing turn counter from the browser. The Host's event
+    // snapshot can lag behind a turn; this keeps stale answers out of the cache.
+    const epoch = Number.isFinite(body?.epoch) ? Math.max(0, Math.trunc(body.epoch)) : 0
     const mode = body?.mode === 'compose' || body?.mode === 'normalize' || body?.mode === 'continuation'
       ? 'compose'
       : 'next'
@@ -1533,10 +1538,10 @@ async function handlePredict(ctx, token, req, res) {
       && req.headers.accept.includes('text/event-stream')
     if (wantsStream) {
       trace('stream', { sessionId, draftChars: draft.length })
-      await withAbort(composeStream(ctx, { sessionId, draft, locale, forced }, res, controller.signal), controller.signal)
+      await withAbort(composeStream(ctx, { sessionId, draft, locale, forced, epoch }, res, controller.signal), controller.signal)
       return
     }
-    const result = await withAbort(predict(ctx, { sessionId, draft, mode, locale, forced }, controller.signal), controller.signal)
+    const result = await withAbort(predict(ctx, { sessionId, draft, mode, locale, forced, epoch }, controller.signal), controller.signal)
     const count = Array.isArray(result.candidates) ? result.candidates.length
       : typeof result.text === 'string' ? 1 : 0
     trace('result', { sessionId, kind: result.kind, count, reason: result.reason ?? null, fallback: result.fallback ?? null })

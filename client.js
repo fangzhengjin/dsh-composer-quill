@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.24.0'
+    const BUILD = '0.25.0'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -126,7 +126,12 @@ const COVERED_DEBOUNCE_MS = 1200
       const response = await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ ...payload, locale: browserLocale(), language: currentConfig().language }),
+        body: JSON.stringify({
+          ...payload,
+          locale: browserLocale(),
+          language: currentConfig().language,
+          epoch: turnEpoch.current,
+        }),
         signal,
         credentials: 'same-origin',
       })
@@ -480,7 +485,9 @@ const COVERED_DEBOUNCE_MS = 1200
      * re-asking the model for something it already produced.
      */
     const SUGGEST_KEY = 'dsh.composer-quill.suggestions'
-    const SUGGEST_TTL_MS = 10 * 60_000
+    // A suggestion about a conversation that has moved on is worse than none, and
+    // this Session moves fast: keep the reuse window short.
+    const SUGGEST_TTL_MS = 3 * 60_000
     const SUGGEST_MAX = 40
 
     // Parsing this map on every keystroke was measurable; comparing the raw
@@ -529,14 +536,19 @@ const COVERED_DEBOUNCE_MS = 1200
       return `${events.length}:${Number.isFinite(seq) ? seq : ''}`
     }
 
-    function suggestionKey(sessionId, kind, draft) {
-      return `${sessionId ?? ''}|${kind}|${draft ?? ''}`
+    /**
+     * A stored suggestion belongs to one conversation state: the turn it was
+     * computed in. Bumping the epoch on every finished turn means nothing survives
+     * a turn, so an answer about an older topic can never come back.
+     */
+    function suggestionKey(sessionId, kind, draft, epoch = '') {
+      return `${sessionId ?? ''}|${kind}|${draft ?? ''}|${epoch}`
     }
 
     function saveSuggestion(sessionId, kind, draft, items, version = '') {
       if (sessionId === null || !Array.isArray(items) || items.length === 0) return
       const map = readSuggestions()
-      map[suggestionKey(sessionId, kind, draft)] = { items, at: Date.now(), version: String(version ?? '') }
+      map[suggestionKey(sessionId, kind, draft, turnEpoch.current)] = { items, at: Date.now(), version: String(version ?? '') }
       const keys = Object.keys(map)
       if (keys.length > SUGGEST_MAX) {
         keys
@@ -549,7 +561,7 @@ const COVERED_DEBOUNCE_MS = 1200
 
     function loadSuggestion(sessionId, kind, draft, version = null) {
       if (sessionId === null) return null
-      const entry = readSuggestions()[suggestionKey(sessionId, kind, draft)]
+      const entry = readSuggestions()[suggestionKey(sessionId, kind, draft, turnEpoch.current)]
       if (entry === null || typeof entry !== 'object' || !Array.isArray(entry.items)) return null
       if (Date.now() - Number(entry.at ?? 0) > SUGGEST_TTL_MS) return null
       // A suggestion computed for an older transcript is exactly the "this has
@@ -627,6 +639,9 @@ const COVERED_DEBOUNCE_MS = 1200
         script: `script:${scriptOfClient(value)}`,
       }
     }
+
+    /** Incremented on every finished turn: nothing computed before it may be reused. */
+    const turnEpoch = { current: 0 }
 
     let learnMemo = { raw: null, data: {} }
 
@@ -1471,6 +1486,7 @@ const COVERED_DEBOUNCE_MS = 1200
           return
         }
         if (prior.running && !running) {
+          turnEpoch.current += 1
           // A finished turn adds messages this Session's history did not have.
           setHistoryEpoch((value) => value + 1)
           // New turn, new transcript: stored suggestions for it are stale.
@@ -2154,6 +2170,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, transcriptVersion } }
   },
 })
+
 
 
 
