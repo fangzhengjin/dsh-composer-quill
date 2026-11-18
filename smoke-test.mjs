@@ -1111,6 +1111,125 @@ check('streaming frames arrive in order and end with done', async () => {
   }
 })
 
+// ------------------------------------------------- independent audit findings
+// A long stream used to add one abort listener per chunk (83 on 80 chunks).
+{
+  let peak = 0
+  const counts = new WeakMap()
+  const originalAdd = AbortSignal.prototype.addEventListener
+  const originalRemove = AbortSignal.prototype.removeEventListener
+  AbortSignal.prototype.addEventListener = function add(type, fn, options) {
+    if (type === 'abort') {
+      const size = (counts.get(this) ?? 0) + 1
+      counts.set(this, size)
+      if (size > peak) peak = size
+    }
+    return originalAdd.call(this, type, fn, options)
+  }
+  AbortSignal.prototype.removeEventListener = function remove(type, fn, options) {
+    if (type === 'abort') counts.set(this, Math.max(0, (counts.get(this) ?? 0) - 1))
+    return originalRemove.call(this, type, fn, options)
+  }
+  try {
+    const session = {
+      id: 's-listeners',
+      snapshotEvents: () => ([
+        { type: 'user/message', seq: 0, data: { content: [{ type: 'text', text: '帮我看下这个报错' }] } },
+        { type: 'assistant/message', seq: 1, data: { message: { content: [{ type: 'text', text: '先贴日志。' }] } } },
+      ]),
+      requestHeader: () => ({ config: { provider: 'p', model: 'm' } }),
+    }
+    const routes = {}
+    const ctx = {
+      agents: { get: () => ({ session }) },
+      llm: {
+        async *stream() {
+          for (let index = 0; index < 60; index += 1) yield { type: 'text-delta', text: '字' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      },
+      inject: (_deps, callback) => callback({
+        effect: (fn) => { fn(); return () => {} },
+        on: () => {},
+        webServer: { register: (route) => { routes[route.path] = route; return () => {} } },
+        clientModules: { clientPath: () => '/tmp/x.js', graph: () => ({ entries: [] }) },
+      }),
+    }
+    host.apply(ctx)
+    await checkAsync('one abort listener per model call, not per chunk', async () => {
+      await new Promise((resolve) => {
+        const req = new EventEmitter()
+        req.method = 'POST'
+        req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
+        const res = new EventEmitter()
+        res.statusCode = 0
+        res.writableEnded = false
+        res.destroyed = false
+        res.setHeader = () => {}
+        res.end = () => resolve()
+        routes['/composer-quill/predict'].handler(req, res)
+        req.emit('data', Buffer.from(JSON.stringify({ sessionId: 's-listeners', mode: 'next', draft: '' })))
+        req.emit('end')
+      })
+      assert.ok(peak <= 3, 'abort listeners peaked at ' + peak)
+    })
+  } finally {
+    AbortSignal.prototype.addEventListener = originalAdd
+    AbortSignal.prototype.removeEventListener = originalRemove
+  }
+}
+
+// The language setting changes no Session event, so it must be part of the cache key.
+{
+  let calls = 0
+  const session = {
+    id: 's-cache-lang',
+    snapshotEvents: () => ([
+      { type: 'user/message', seq: 0, data: { content: [{ type: 'text', text: '帮我把日志整理一下' }] } },
+      { type: 'assistant/message', seq: 1, data: { message: { content: [{ type: 'text', text: '先贴日志。' }] } } },
+    ]),
+    requestHeader: () => ({ config: { provider: 'p', model: 'm' } }),
+  }
+  const routes = {}
+  const ctx = {
+    agents: { get: () => ({ session }) },
+    llm: {
+      async *stream() {
+        calls += 1
+        yield { type: 'text-delta', text: '，把日志贴上来。' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+    inject: (_deps, callback) => callback({
+      effect: (fn) => { fn(); return () => {} },
+      on: () => {},
+      webServer: { register: (route) => { routes[route.path] = route; return () => {} } },
+      clientModules: { clientPath: () => '/tmp/x.js', graph: () => ({ entries: [] }) },
+    }),
+  }
+  host.apply(ctx)
+  const call = (language) => new Promise((resolve) => {
+    const req = new EventEmitter()
+    req.method = 'POST'
+    req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
+    const res = new EventEmitter()
+    res.statusCode = 0
+    res.writableEnded = false
+    res.destroyed = false
+    res.setHeader = () => {}
+    res.end = (chunk) => resolve(JSON.parse(String(chunk)))
+    routes['/composer-quill/predict'].handler(req, res)
+    req.emit('data', Buffer.from(JSON.stringify({ sessionId: 's-cache-lang', mode: 'compose', draft: '帮我把日志', language })))
+    req.emit('end')
+  })
+  await checkAsync('switching the language setting is not served from cache', async () => {
+    await call('auto')
+    const afterFirst = calls
+    await call('en')
+    assert.ok(calls > afterFirst, 'model calls stayed at ' + calls)
+  })
+}
+
 for (const off of disposers) off()
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)
