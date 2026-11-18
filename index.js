@@ -44,7 +44,11 @@ const RESTATE_PREFIX_MIN_CHARS = 4
 const MIN_TAIL_DRAFT_CHARS = 4
 const MAX_NORMALIZED_CHARS = 8000
 const MAX_TOKENS = 500
-const CACHE_TTL_MS = 120_000
+// A cache key already contains the Session, the transcript version, the model, the
+// language and the browser's turn counter: if all of that is unchanged the answer is
+// still the answer, and re-sampling it costs money for nothing. Expiry is therefore
+// long; the size cap is what bounds memory, and the negative cache stays short.
+const CACHE_TTL_MS = 24 * 60 * 60_000
 const REQUEST_TIMEOUT_MS = 30_000
 const MAX_BODY_BYTES = 48 * 1024
 const ABORTED = Symbol('composer-quill.aborted')

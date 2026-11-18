@@ -608,11 +608,20 @@ check('stored suggestions are reused, expire and clear per session', () => {
   assert.deepEqual(loadSuggestion('s-b', 'compose', '帮我把这段日志'), ['帮我把这段日志整理一下'])
   assert.equal(loadSuggestion('s-missing', 'next', ''), null)
 
-  // Expiry: rewrite the entry with an old timestamp.
+  // An hour old is still the same conversation state, so it is still reused.
   const map = JSON.parse(window.localStorage.getItem('dsh.composer-quill.suggestions'))
-  for (const key of Object.keys(map)) map[key].at = Date.now() - 11 * 60_000
+  for (const key of Object.keys(map)) map[key].at = Date.now() - 60 * 60_000
   window.localStorage.setItem('dsh.composer-quill.suggestions', JSON.stringify(map))
-  assert.equal(loadSuggestion('s-a', 'next', ''), null, 'an 11-minute-old suggestion must expire')
+  assert.deepEqual(
+    loadSuggestion('s-a', 'next', ''),
+    ['继续看下去', '换个思路'],
+    'an hour-old suggestion for an unchanged conversation must be reused',
+  )
+  // Beyond the storage horizon it is dropped.
+  const stale = JSON.parse(window.localStorage.getItem('dsh.composer-quill.suggestions'))
+  for (const key of Object.keys(stale)) stale[key].at = Date.now() - 25 * 60 * 60_000
+  window.localStorage.setItem('dsh.composer-quill.suggestions', JSON.stringify(stale))
+  assert.equal(loadSuggestion('s-a', 'next', ''), null, 'a day-old entry is storage-expired')
 
   // Clearing one session leaves the others alone.
   saveSuggestion('s-a', 'next', '', ['x'])
@@ -1220,6 +1229,60 @@ check('streaming frames arrive in order and end with done', async () => {
     AbortSignal.prototype.addEventListener = originalAdd
     AbortSignal.prototype.removeEventListener = originalRemove
   }
+}
+
+// Nothing changed, time passed: still one model call.
+{
+  let calls = 0
+  const session = {
+    id: 's-steady',
+    snapshotEvents: () => ([
+      { type: 'user/message', seq: 0, data: { content: [{ type: 'text', text: '帮我看下这个报错' }] } },
+      { type: 'assistant/message', seq: 1, data: { message: { content: [{ type: 'text', text: '先贴日志。' }] } } },
+    ]),
+    requestHeader: () => ({ config: { provider: 'p', model: 'm' } }),
+  }
+  const routes = {}
+  const ctx = {
+    agents: { get: () => ({ session }) },
+    llm: {
+      async *stream() {
+        calls += 1
+        yield { type: 'text-delta', text: '{"candidates":["贴一下第 3 行日志"]}' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+    inject: (_deps, callback) => callback({
+      effect: (fn) => { fn(); return () => {} },
+      on: () => {},
+      webServer: { register: (route) => { routes[route.path] = route; return () => {} } },
+      clientModules: { clientPath: () => '/tmp/x.js', graph: () => ({ entries: [] }) },
+    }),
+  }
+  host.apply(ctx)
+  const call = () => new Promise((resolve) => {
+    const req = new EventEmitter()
+    req.method = 'POST'
+    req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
+    const res = new EventEmitter()
+    res.statusCode = 0
+    res.writableEnded = false
+    res.destroyed = false
+    res.setHeader = () => {}
+    res.end = (chunk) => resolve(JSON.parse(String(chunk)))
+    routes['/composer-quill/predict'].handler(req, res)
+    req.emit('data', Buffer.from(JSON.stringify({ sessionId: 's-steady', mode: 'next', draft: '', epoch: 3 })))
+    req.emit('end')
+  })
+  await checkAsync('an unchanged conversation is never re-sampled', async () => {
+    await call()
+    const first = calls
+    await wait(2500)
+    await call()
+    await wait(500)
+    await call()
+    assert.equal(calls, first, 'model calls grew from ' + first + ' to ' + calls)
+  })
 }
 
 // A finished turn must invalidate the Host cache even when its transcript lags.
