@@ -276,7 +276,7 @@ function styleProfile(events) {
   const cjk = recent.join('').match(/[\u3000-\u9fff]/g)?.length ?? 0
   const latin = recent.join('').match(/[A-Za-z]/g)?.length ?? 0
   const language = cjk > latin * 2 ? 'zh' : latin > cjk * 2 ? 'en' : 'mixed'
-  const greetings = /^(好的|好(=|，|,|！)|嗯|谢谢|收到|ok|okay|sure|hi|hello|thanks)\b/i
+  const greetings = /^(好的|好(?=[，,！!=\s]|$)|嗯|谢谢|收到|ok|okay|sure|hi|hello|thanks)(?:[，,。.!！?：:\s]|$)/i
   return {
     count: recent.length,
     avgChars: average,

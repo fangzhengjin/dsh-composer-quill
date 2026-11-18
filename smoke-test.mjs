@@ -819,6 +819,33 @@ await checkAsync('trailing newline still yields a tail proposal', async () => {
   })
 }
 
+check('acceptance feedback reorders candidates, never invents them', () => {
+  const { featuresOf, rankByLearning, recordOutcome, learningSummary } = moduleExports.__test
+  window.localStorage.clear()
+
+  const short = '贴一下日志'
+  const long = '请把刚才那段报错的完整堆栈从头到尾贴出来，并且标出最先失败的那一行，这样我才能判断是依赖版本还是代码本身的问题'
+  assert.equal(featuresOf(short, 'next').length, 'len:xs')
+  assert.equal(featuresOf(long, 'next').length, 'len:l')
+  assert.equal(featuresOf('，顺便看下版本', 'next').opener, 'open:punct')
+  assert.equal(featuresOf('好的，我来看看', 'next').greeting, 'greet:yes')
+
+  // Teach it: short suggestions get accepted, long ones get dismissed.
+  for (let index = 0; index < 6; index += 1) {
+    recordOutcome(featuresOf(short, 'next'), true)
+    recordOutcome(featuresOf(long, 'next'), false)
+  }
+  const ranked = rankByLearning([long, short], 'next')
+  assert.deepEqual(ranked, [short, long], JSON.stringify(ranked))
+
+  // Same set, same membership: reordering must not drop or add candidates.
+  assert.equal(ranked.length, 2)
+
+  const summary = learningSummary()
+  assert.equal(summary.accepted, 6, JSON.stringify(summary))
+  assert.ok(summary.rate > 0.4 && summary.rate < 1, JSON.stringify(summary))
+})
+
 check('a truncated stream is reported as a failure', async () => {
   const { streamRoute } = moduleExports.__test
   const frames = [

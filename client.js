@@ -57,6 +57,8 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.mode.manual': '仅手动',
       'settings.debounce': '停顿（毫秒）',
       'settings.timeout': '超时（毫秒）',
+      'settings.learning': '采纳反馈',
+      'settings.learningEmpty': '还没有样本（Tab 采纳 / Esc 忽略都会计入）',
       'settings.manualHint': '手动触发：Ctrl+Shift+Space',
     }
     const en = {
@@ -76,6 +78,8 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.mode.manual': 'Manual only',
       'settings.debounce': 'Pause (ms)',
       'settings.timeout': 'Timeout (ms)',
+      'settings.learning': 'Acceptance feedback',
+      'settings.learningEmpty': 'no samples yet (Tab accepts, Esc dismisses)',
       'settings.manualHint': 'Trigger manually: Ctrl+Shift+Space',
     }
 
@@ -552,6 +556,110 @@ const COVERED_DEBOUNCE_MS = 1200
       if (typeof full !== 'string' || full === '') return ''
       if (typeof draft !== 'string' || draft === '') return ''
       return full.toLowerCase().startsWith(draft.toLowerCase()) ? full.slice(draft.length) : ''
+    }
+
+    /**
+     * Acceptance learning. Every suggestion that reached the screen is described
+     * by a few cheap features; each explicit accept (Tab / click) or reject (Esc,
+     * or sending the message without accepting) updates that feature's counters.
+     * The counters only reorder candidates — they never invent one.
+     */
+    const LEARN_KEY = 'dsh.composer-quill.learning'
+    const LEARN_MAX_KEYS = 400
+
+    function scriptOfClient(text) {
+      const value = String(text ?? '')
+      const cjk = value.match(/[\u3000-\u9fff]/g)?.length ?? 0
+      const latin = value.match(/[A-Za-z]/g)?.length ?? 0
+      if (cjk === 0 && latin === 0) return 'none'
+      if (cjk > latin * 2) return 'zh'
+      if (latin > cjk * 2) return 'en'
+      return 'mixed'
+    }
+
+    function featuresOf(text, kind) {
+      const value = String(text ?? '')
+      const length = Array.from(value).length
+      return {
+        kind: `kind:${kind}`,
+        length: `len:${length < 8 ? 'xs' : length < 24 ? 's' : length < 48 ? 'm' : 'l'}`,
+        opener: `open:${/^[，。、,.!?！？;；:]/.test(value) ? 'punct' : 'word'}`,
+        greeting: `greet:${/^(好的|好[，,！!]|嗯|收到|没问题|ok|okay|sure|thanks)(?:[，,。.!！?：:\s]|$)/i.test(value) ? 'yes' : 'no'}`,
+        ending: `end:${/[。.!?！？]$/.test(value) ? 'period' : 'open'}`,
+        script: `script:${scriptOfClient(value)}`,
+      }
+    }
+
+    let learnMemo = { raw: null, data: {} }
+
+    function readLearning() {
+      try {
+        const raw = window.localStorage.getItem(LEARN_KEY)
+        if (raw === learnMemo.raw) return learnMemo.data
+        learnMemo = { raw, data: raw === null || raw === '' ? {} : JSON.parse(raw) }
+        return learnMemo.data
+      } catch {
+        learnMemo = { raw: null, data: {} }
+        return learnMemo.data
+      }
+    }
+
+    function writeLearning(data) {
+      const keys = Object.keys(data)
+      for (const key of keys.slice(0, Math.max(0, keys.length - LEARN_MAX_KEYS))) delete data[key]
+      try {
+        const raw = JSON.stringify(data)
+        window.localStorage.setItem(LEARN_KEY, raw)
+        learnMemo = { raw, data }
+      } catch {
+        // Storage full: learning degrades to in-memory for this session.
+        learnMemo = { raw: null, data }
+      }
+    }
+
+    /** Laplace-smoothed acceptance rate for one feature value. */
+    function rateOf(entry) {
+      const shown = Number(entry?.shown ?? 0)
+      const accepted = Number(entry?.accepted ?? 0)
+      return (accepted + 1) / (shown + 2)
+    }
+
+    function recordOutcome(features, accepted) {
+      const data = readLearning()
+      for (const value of Object.values(features ?? {})) {
+        const entry = data[value] ?? { shown: 0, accepted: 0 }
+        entry.shown += 1
+        if (accepted) entry.accepted += 1
+        data[value] = entry
+      }
+      writeLearning(data)
+    }
+
+    /** Reorder candidates by learned preference; stable for equal scores. */
+    function rankByLearning(items, kind) {
+      if (!Array.isArray(items) || items.length < 2) return items
+      const data = readLearning()
+      const scored = items.map((text, index) => {
+        const features = featuresOf(text, kind)
+        let score = 0
+        for (const value of Object.values(features)) score += rateOf(data[value]) - 0.5
+        return { text, index, score }
+      })
+      scored.sort((left, right) => (right.score - left.score) || (left.index - right.index))
+      return scored.map((entry) => entry.text)
+    }
+
+    /** One line for the settings card: how much has been learned. */
+    function learningSummary() {
+      const data = readLearning()
+      let shown = 0
+      let accepted = 0
+      for (const [key, entry] of Object.entries(data)) {
+        if (!key.startsWith('kind:')) continue
+        shown += Number(entry?.shown ?? 0)
+        accepted += Number(entry?.accepted ?? 0)
+      }
+      return { shown, accepted, rate: shown === 0 ? null : accepted / shown }
     }
 
     /**
@@ -1057,6 +1165,11 @@ const COVERED_DEBOUNCE_MS = 1200
       }, [])
 
       const dismissAll = React.useCallback(() => {
+        const shown = learnedShown.current
+        if (shown !== null && shown.consumed !== true) {
+          shown.consumed = true
+          recordOutcome(shown.features, false)
+        }
         stopTimer()
         ghost.cancel()
         ghost.clear(sessionId ?? undefined)
@@ -1102,6 +1215,7 @@ const COVERED_DEBOUNCE_MS = 1200
       // one network call.
       const lastCall = React.useRef({ key: '', at: 0 })
       const lastCovered = React.useRef('')
+      const learnedShown = React.useRef(null)
       const request = React.useCallback((mode, forDraft, force = false, delayOverride = null) => {
         stopTimer()
         timer.current = setTimeout(() => {
@@ -1312,6 +1426,11 @@ const COVERED_DEBOUNCE_MS = 1200
           if (enabled && draftEmpty && settings.mode !== 'manual') request('next', '', true)
         }
         if (running) {
+          const shown = learnedShown.current
+          if (shown !== null && shown.consumed !== true && Date.now() - shown.at < 120_000) {
+            shown.consumed = true
+            recordOutcome(shown.features, false)
+          }
           // A turn started: stop any in-flight request and hide the ghost, but
           // keep the proposal. The row is hidden by `running` anyway, and keeping
           // it means a suggestion is already on screen the instant the turn ends
@@ -1436,7 +1555,9 @@ const COVERED_DEBOUNCE_MS = 1200
       }, [stopTimer, ghost, ghostLayer])
 
       const items = state.sessionId === sessionId ? state.items : []
-      const current = items[state.index] ?? ''
+      // Learning only reorders: the candidate set itself still comes from the Host.
+      const ordered = state.kind === 'next' ? rankByLearning(items, 'next') : items
+      const current = ordered[state.index] ?? ''
       const composed = state.kind === 'compose' ? current : ''
       // The Host trims trailing whitespace when it joins a tail, so a draft that
       // ends with a newline (caret on an empty line) must be compared trimmed —
@@ -1479,6 +1600,11 @@ const COVERED_DEBOUNCE_MS = 1200
         const insert = (text) => typeof inputActions?.insertText === 'function'
           && inputActions.insertText(text, inputActions.captureInsertion?.()) !== false
         const afterInsert = (applied) => {
+          const shown = learnedShown.current
+          if (shown !== null && shown.consumed !== true) {
+            shown.consumed = true
+            recordOutcome(shown.features, true)
+          }
           dismissedDraft.current = null
           // Remember the draft the accept produced, so the safety net does not
           // immediately re-ask for the text that was just applied.
@@ -1716,6 +1842,15 @@ const COVERED_DEBOUNCE_MS = 1200
             enabled,
           }),
         })
+        // Remember what reached the screen so an accept/reject can be attributed.
+        const shownText = nextActive ? current : proposal
+        if (shownText !== '') {
+          learnedShown.current = {
+            features: featuresOf(shownText, nextActive ? 'next' : 'compose'),
+            at: Date.now(),
+            consumed: false,
+          }
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [decisionKey])
 
@@ -1860,6 +1995,12 @@ const COVERED_DEBOUNCE_MS = 1200
           onChange: (event) => config.set({ timeoutMs: Number(event.target.value) }),
           style: { ...fieldStyle, width: '96px' },
         })),
+      h('div', { style: { color: 'var(--dsw-alias-label-tertiary, #8a8f98)', fontSize: '11px' } },
+        `${t('settings.learning')}：${(() => {
+          const summary = learningSummary()
+          if (summary.shown === 0) return t('settings.learningEmpty')
+          return `${summary.accepted}/${summary.shown}（${Math.round(summary.rate * 100)}%）`
+        })()}`),
       h('div', { style: { color: 'var(--dsw-alias-label-tertiary, #8a8f98)', fontSize: '11px' } }, t('settings.manualHint')))
     }
 
@@ -1920,7 +2061,7 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute } }
+    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary } }
   },
 })
 

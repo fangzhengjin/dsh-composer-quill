@@ -56,6 +56,7 @@ def main() -> int:
         h = lambda expr: page.evaluate(f"() => window.__harness.{expr}")
 
         def reset(draft=""):
+            h("resetLearning()")
             h(f"type({json.dumps(draft)})")
 
         def compose_calls():
@@ -273,12 +274,12 @@ def main() -> int:
             snap = h("snapshot()")
             chip = proposal_of(snap)
             ghost = snap["text"]["text"] if snap["text"] else ""
-            if "继续看下去" in (chip + ghost):
+            if "按 Tab 采纳" in chip:
                 break
             page.wait_for_timeout(120)
         record(
             "S16 清空文本后建议重新弹出",
-            bool(chip or ghost) and ("继续看下去" in (chip + ghost)),
+            bool(chip) and ("按 Tab 采纳" in chip),
             f"采纳后={after_accept[:12]!r} 清空后 chip={chip[:26]!r} ghost={ghost[:16]!r}",
         )
 
@@ -330,6 +331,30 @@ def main() -> int:
             grew,
             f"灰字长度集合={ghost_lengths[-6:]}",
         )
+
+        # ---- S20 采纳反馈：学到的偏好会重排候选（但不会新增/丢弃）
+        reset("")
+        # 让「长建议」显得更受欢迎
+        h("""setLearning({
+            "kind:next": {"shown": 10, "accepted": 9},
+            "len:l": {"shown": 10, "accepted": 9},
+            "len:xs": {"shown": 10, "accepted": 1},
+            "open:word": {"shown": 10, "accepted": 5},
+            "greet:no": {"shown": 10, "accepted": 9},
+            "end:period": {"shown": 10, "accepted": 5},
+            "end:open": {"shown": 10, "accepted": 5},
+            "script:zh": {"shown": 10, "accepted": 9}
+        })""")
+        page.wait_for_timeout(1200)
+        snap = h("snapshot()")
+        chip = proposal_of(snap)
+        learned_first = chip.split("：", 1)[-1][:12]
+        record(
+            "S20 学到偏好后重排候选",
+            "把刚才那段报错" in chip and "第 1/2 条" in chip,
+            f"首条={learned_first!r}",
+        )
+        h("resetLearning()")
 
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")

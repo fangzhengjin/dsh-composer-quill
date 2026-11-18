@@ -62,7 +62,7 @@ window.fetch = async (url, init) => {
   }
   let payload = { ok: true }
   if (!String(url).includes('beacon')) {
-    payload = { kind: 'next', candidates: ['继续看下去', '换个思路'] }
+    payload = { kind: 'next', candidates: ['看一下', '把刚才那段报错的完整堆栈从头到尾贴出来，并标出最先失败的一行，这样我才好判断是版本问题还是代码本身的问题'] }
   }
   return { ok: true, status: 200, json: async () => payload }
 }
@@ -230,6 +230,13 @@ async function main() {
     setSession(id) {
       render(editor.textContent ?? '', id)
     },
+    /** Seed the acceptance-learning counters (plugin key) for a scenario. */
+    setLearning(map) {
+      window.localStorage.setItem('dsh.composer-quill.learning', JSON.stringify(map))
+    },
+    resetLearning() {
+      window.localStorage.removeItem('dsh.composer-quill.learning')
+    },
     setComposeMode(mode) {
       composeMode = mode
       composeFailures = 0
@@ -345,4 +352,5 @@ main().catch((error) => {
   window.__harnessError = String((error && error.stack) || error)
   console.error(error)
 })
+
 
