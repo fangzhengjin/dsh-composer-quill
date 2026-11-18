@@ -151,6 +151,7 @@
 | 提示词 | 镜像语言/长度/语气；复用用户原词；禁止描述草稿或推理过程 | `NEXT_RULES` / `COMPOSE_RULES` |
 | 解析 | 丢弃自述（`looksLikeMeta`）、纯标点（`isPunctuationOnly`）、回显草稿、超长、含遮蔽标记的改写 | `parseComposeReply` |
 | 排序 | next 候选按「贴近平均长度 + 与上一条助手消息相关 − 无中生有的开场白」重排，模型顺序仅作并列参考 | `rankCandidates` |
+| 语种 | `scriptOf` 判定草稿/候选的语种；中文用户不会被喂英文建议，中文草稿也不会被英文续写 | `rankCandidates` / `parseComposeReply` |
 
 风格画像是本地统计（不调模型）：`{"count":12,"avgChars":28,"language":"zh","usesGreeting":false,"endsWithPeriod":true}`。它同时用于**判断能否加开场白**——画像里没有客套的用户，建议里出现「好的，…」会被扣分。
 

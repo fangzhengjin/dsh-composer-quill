@@ -216,6 +216,27 @@ check('historyOf keeps the user turns, newest last, without duplicates', () => {
   assert.deepEqual(items.map((item) => item.text), ['把日志按时间排一下', '帮我看看这个报错'])
 })
 
+check('a suggestion never switches language on the user', () => {
+  const { scriptOf, rankCandidates, parseComposeReply } = host.__test
+  assert.equal(scriptOf('帮我把日志整理一下'), 'zh')
+  assert.equal(scriptOf('fix the flaky test'), 'en')
+  assert.equal(scriptOf('OK'), 'en')
+  assert.equal(scriptOf('帮我看下 fix'), 'mixed')
+
+  const profile = { count: 9, avgChars: 20, language: 'zh', usesGreeting: false }
+  const ranked = rankCandidates(
+    ['Skip all three for now. The two remaining issues are the leading comma and the csv case.', '先把这三条都跳过，然后把剩下两个问题说完。'],
+    { profile, lastAssistant: 'The draft is fine.', lastUser: '继续' },
+  )
+  assert.deepEqual(ranked, ['先把这三条都跳过，然后把剩下两个问题说完。'], JSON.stringify(ranked))
+
+  // A Chinese draft must not be finished in English.
+  assert.equal(parseComposeReply(' and make it deterministic.', '帮我修一下这个不稳定的测试'), null)
+  // ...but an English draft with an English tail is fine.
+  const kept = parseComposeReply(' and make it deterministic.', 'fix the flaky test')
+  assert.equal(kept?.text, 'fix the flaky test and make it deterministic.')
+})
+
 check('model commentary is never offered as a completion', () => {
   const { looksLikeMeta, parseComposeReply } = host.__test
   const leaks = [
