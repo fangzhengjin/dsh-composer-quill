@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/local/dsh-composer-quill.git"
+    "url": "git+https://github.com/yugyq/dsh-composer-quill.git"
   },
   "exports": {
     ".": "./index.js",
@@ -42,58 +42,17 @@
         "@deepseek-ai/dsh-client-ui-settings"
       ]
     }
-  }
+  },
+  "homepage": "https://github.com/yugyq/dsh-composer-quill#readme",
+  "bugs": {
+    "url": "https://github.com/yugyq/dsh-composer-quill/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "composer",
+    "autocomplete",
+    "ghost-text",
+    "plugin"
+  ]
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
