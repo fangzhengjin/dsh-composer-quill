@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Composer ghost completion",
+    "description": "Predicts your next message after each reply and shows it as ghost text inside the composer; Tab inserts it as an editable draft, and typing that matches the suggestion keeps the rest as a completion.",
+    "detail": "docs/DETAIL.md"
+  }
+}

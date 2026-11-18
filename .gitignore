@@ -1,0 +1,18 @@
+# 依赖与产物
+node_modules/
+dist/
+*.log
+*.log.1
+
+# 运行时产物（插件自己写出来的，不进版本库）
+composer-quill-cache.json
+composer-quill-cache.json.*.tmp
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 本地临时脚本（手工调试用，命名以 _ 开头）
+_*.mjs

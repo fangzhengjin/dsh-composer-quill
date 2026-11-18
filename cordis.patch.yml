@@ -1,0 +1,3 @@
+- insert:
+    - id: composer-quill
+      name: 'dsh-composer-quill'
