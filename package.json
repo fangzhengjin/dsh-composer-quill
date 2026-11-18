@@ -1,6 +1,6 @@
 {
   "name": "dsh-composer-quill",
-  "version": "0.31.3",
+  "version": "0.31.4",
   "private": true,
   "type": "module",
   "description": "Quill: completion for the DeepSeek Harness composer: predicts your next message and completes what you are typing.",
@@ -56,6 +56,7 @@
     "plugin"
   ]
 }
+
 
 
 
