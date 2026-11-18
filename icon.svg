@@ -1,8 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Composer ghost completion">
-  <rect width="64" height="64" rx="14" fill="#1f3d63"/>
-  <path d="M20 46V28a12 12 0 0 1 24 0v18l-4-3-4 3-4-3-4 3-4-3z" fill="#e8eef7" opacity="0.92"/>
-  <circle cx="27.5" cy="30" r="2.6" fill="#1f3d63"/>
-  <circle cx="36.5" cy="30" r="2.6" fill="#1f3d63"/>
-  <rect x="25" y="38" width="14" height="2.4" rx="1.2" fill="#6f8bb2"/>
-  <rect x="24" y="12" width="16" height="3" rx="1.5" fill="#5a86c4" opacity="0.75"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="续笔 · Quill">
+  <g fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 羽毛笔 -->
+    <path d="M33 9c-7 1-12 5-15 11l-2 5 5-2c6-3 10-8 12-14z" fill="#2563eb" stroke="none"/>
+    <path d="M16 23l-3 9 9-3" fill="#fff"/>
+    <!-- 续写出的那一笔 -->
+    <path d="M25 33h9" stroke="#93c5fd"/>
+    <path d="M25 39h5" stroke="#bfdbfe"/>
+  </g>
 </svg>
