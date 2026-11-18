@@ -2,6 +2,15 @@
 
 版本号规则：`MAJOR.MINOR.PATCH` 语义化。**每次改动行为都要同时改两处**：`package.json` 的 `version` 与 `client.js` 的 `BUILD` 常量——后者会随每条诊断日志上报，是排障时判断「装的是哪版」的唯一可靠依据。
 
+## 0.31.x
+
+### 0.31.0
+改名：**续笔**（`dsh-composer-quill`）。
+- 包名、插件 id、路由、存储键、日志与缓存文件名、请求头、DOM 标记、环境变量一并从 `composer-quill` 改为 `composer-quill`
+- 中文显示名「续笔」→「续笔」；英文显示名改为 `Quill — composer completion`
+- **不提供旧配置迁移**：改名意味着 `localStorage` 的 `dsh.composer-quill.*` 是全新键，之前的设置、采纳统计与已存建议都会重置（行为无变化，只是回到默认值）
+- 无功能变更；单测 57 条、模拟器 24/24 与改名前的行为一致
+
 ## 0.30.x
 
 ### 0.30.0
