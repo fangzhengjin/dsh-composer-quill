@@ -216,6 +216,19 @@ check('historyOf keeps the user turns, newest last, without duplicates', () => {
   assert.deepEqual(items.map((item) => item.text), ['把日志按时间排一下', '帮我看看这个报错'])
 })
 
+check('a short draft gets a real tail when one exists', () => {
+  const { parseComposeReply } = host.__test
+  // Three characters of genuine continuation are kept (that is the ghost text).
+  const tail = parseComposeReply('看一下吧。', '再', { allowTail: true, minTail: 3 })
+  assert.equal(tail?.mode, 'append')
+  assert.equal(tail?.text, '再看一下吧。')
+  // A fragment below the minimum is refused.
+  assert.equal(parseComposeReply('我。', '帮', { allowTail: true, minTail: 3 }), null)
+  // A rewrite still works when the draft cannot be continued.
+  const rewrite = parseComposeReply('REWRITE: 帮我把日志整理一下', '帮', { allowTail: true, minTail: 3 })
+  assert.equal(rewrite?.mode, 'full')
+})
+
 check('a two-character draft never gets a fragment tail', () => {
   const { parseComposeReply } = host.__test
   // Tails are refused when the draft is too short to continue...
