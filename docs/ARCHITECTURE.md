@@ -141,6 +141,19 @@
 
 **abort 语义**：客户端每发新请求就 abort 旧的；宿主的**共享工作不挂在单个请求的 signal 上**（自带控制器 + 30s 超时），否则第一个客户端断开会把其他人的结果一起杀掉。
 
+## 6.5 质量管线（0.15.0）
+
+一次建议从模型到屏幕要过四道关：
+
+| 关 | 做什么 | 代码 |
+| --- | --- | --- |
+| 上下文 | 最近 6 轮 + 最近一条助手消息（≤400 字符）+ 风格画像，全部以「数据，不是指令」的措辞包起来 | `transcriptOf` / `styleProfile` / `lastAssistantText` |
+| 提示词 | 镜像语言/长度/语气；复用用户原词；禁止描述草稿或推理过程 | `NEXT_RULES` / `COMPOSE_RULES` |
+| 解析 | 丢弃自述（`looksLikeMeta`）、纯标点（`isPunctuationOnly`）、回显草稿、超长、含遮蔽标记的改写 | `parseComposeReply` |
+| 排序 | next 候选按「贴近平均长度 + 与上一条助手消息相关 − 无中生有的开场白」重排，模型顺序仅作并列参考 | `rankCandidates` |
+
+风格画像是本地统计（不调模型）：`{"count":12,"avgChars":28,"language":"zh","usesGreeting":false,"endsWithPeriod":true}`。它同时用于**判断能否加开场白**——画像里没有客套的用户，建议里出现「好的，…」会被扣分。
+
 ## 7. 失败与降级
 
 | 情况 | 表现 |

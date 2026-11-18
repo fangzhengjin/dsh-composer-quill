@@ -216,6 +216,52 @@ check('historyOf keeps the user turns, newest last, without duplicates', () => {
   assert.deepEqual(items.map((item) => item.text), ['把日志按时间排一下', '帮我看看这个报错'])
 })
 
+check('model commentary is never offered as a completion', () => {
+  const { looksLikeMeta, parseComposeReply } = host.__test
+  const leaks = [
+    'The draft is already complete and sound, so no addition is warranted.',
+    'No further additions are needed.',
+    'Nothing to add here.',
+    '无需补充内容。',
+    '草稿已经完整。',
+  ]
+  for (const text of leaks) {
+    assert.equal(looksLikeMeta(text), true, text)
+    assert.equal(parseComposeReply(text, '帮我看看这个报错'), null, `tail leaked: ${text}`)
+    assert.equal(parseComposeReply(`REWRITE: ${text}`, '帮我看看这个报错'), null, `rewrite leaked: ${text}`)
+  }
+  // A real completion survives.
+  assert.equal(looksLikeMeta('，把报错行和时间一起贴上来。'), false)
+})
+
+check('styleProfile describes how this user writes', () => {
+  const { styleProfile } = host.__test
+  const events = [
+    { type: 'user/message', data: { content: [{ type: 'text', text: '帮我把日志整理一下' }] } },
+    { type: 'user/message', data: { content: [{ type: 'text', text: '再看下报错在哪里' }] } },
+    { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '好的' }] } } },
+    { type: 'user/message', data: { content: [{ type: 'text', text: '把结论写成三条' }] } },
+  ]
+  const profile = styleProfile(events)
+  assert.equal(profile.count, 3)
+  assert.ok(profile.avgChars > 5 && profile.avgChars < 20, JSON.stringify(profile))
+  assert.equal(profile.language, 'zh')
+  assert.equal(profile.usesGreeting, false)
+})
+
+check('candidates are ranked by fit, not by model order', () => {
+  const { rankCandidates } = host.__test
+  const profile = { count: 5, avgChars: 12, language: 'zh', usesGreeting: false }
+  const lastAssistant = '报错指向第 42 行的空指针，需要贴出那附近十行日志。'
+  const ranked = rankCandidates(
+    ['好的，我来看看这个问题的具体情况吧。', '我把第 42 行附近的日志贴出来。', '还有别的吗'],
+    { profile, lastAssistant, lastUser: '帮我看下报错' },
+  )
+  assert.ok(ranked.length >= 1, JSON.stringify(ranked))
+  // The greeting opener is pushed to the back.
+  assert.notEqual(ranked[0], '好的，我来看看这个问题的具体情况吧。', JSON.stringify(ranked))
+})
+
 check('the diagnostic log rotates once it grows', () => {
   const { rotateLog, LOG_MAX_BYTES } = host.__test
   const file = `${tmpdir()}/ghost-log-test-${process.pid}.log`

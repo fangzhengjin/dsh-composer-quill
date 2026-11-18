@@ -82,6 +82,7 @@ cd dev/harness; node node_modules/esbuild/bin/esbuild src.js --bundle --format=i
 | `verify_reuse_reload.py` | 刷新后是否 0 请求复用已存建议 |
 | `verify_no_storm.py` / `verify_covered.py` | 请求次数（无取消风暴、覆盖区间零调用） |
 | `verify_settings_ui.py` | 设置卡片渲染与持久化 |
+| `quality_probe.py` | 固定 5 条草稿的建议质量对比（改动提示词/排序前后各跑一次，diff 输出） |
 | `verify_stream_repaint.py` | 流式期间灰字是否增长（模型吐得快时不稳定，以 S19 为准） |
 
 ## 4. 调试

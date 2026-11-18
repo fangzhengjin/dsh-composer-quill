@@ -55,5 +55,6 @@ python verify_emptyline.py  "http://127.0.0.1:PORT/?token=…"
 | `verify_stream_real.py` / `verify_stream_repaint.py` | 流式首字延迟 / 灰字随流增长 |
 | `verify_history_*.py` | 历史补全（真实会话 / 指定会话） |
 | `verify_review_real.py` | 审查后的综合回归 |
+| `quality_probe.py` | 建议质量对比：固定 5 条草稿，改动前后各跑一次 `quality-before.json` / `quality-after.json` |
 
 脚本都会在结束时打印 PASS/FAIL 并截图（PNG 落在仓库根目录，已被 `.gitignore` 排除）。
