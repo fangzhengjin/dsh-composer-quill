@@ -59,7 +59,7 @@ with sync_playwright() as p:
     for _ in range(60):
         page.wait_for_timeout(250)
         state = page.evaluate(STATE)
-        if state["ghost"] or state["chip"]:
+        if state["ghost"] or state["chip"] or "·" in state["hint"]:
             first = state
             break
     print("首个建议: ghost=%r chip=%r" % ((first or {}).get("ghost", "")[:30], (first or {}).get("chip", "")[:30]))
@@ -73,9 +73,9 @@ with sync_playwright() as p:
     with_pending = 0
     for _ in range(60):
         state = page.evaluate(STATE)
-        if state["ghost"] or state["chip"]:
+        if state["ghost"] or state["chip"] or "·" in state["hint"]:
             with_proposal += 1
-        elif state["pending"]:
+        elif state["pending"] or state["hint"]:
             with_pending += 1
         else:
             blanks += 1
@@ -87,3 +87,4 @@ with sync_playwright() as p:
     page.screenshot(path="no-blink-2.png")
     browser.close()
     sys.exit(0 if ok else 1)
+

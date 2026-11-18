@@ -216,25 +216,6 @@ check('historyOf keeps the user turns, newest last, without duplicates', () => {
   assert.deepEqual(items.map((item) => item.text), ['把日志按时间排一下', '帮我看看这个报错'])
 })
 
-check('the short-draft prompt carries the conversation', () => {
-  const { buildShortDraftPrompt } = host.__test
-  const prompt = buildShortDraftPrompt({
-    draft: '再',
-    context: JSON.stringify([{ role: 'assistant', text: '语言设置只影响空输入时的建议。' }]),
-    digest: { thesis: '把插件的语言设置拆开', recentUserMessages: ['补写跟随草稿'] },
-    assistant: '语言设置只影响空输入时的建议，补写跟随已有文本。',
-    style: { count: 6, avgChars: 20, language: 'zh', usesGreeting: false },
-    language: 'zh',
-  })
-  // Every context piece reached the model...
-  assert.ok(prompt.includes('语言设置只影响空输入时的建议'), 'transcript missing')
-  assert.ok(prompt.includes('把插件的语言设置拆开'), 'digest missing')
-  assert.ok(prompt.includes('补写跟随已有文本'), 'assistant missing')
-  // ...and the instruction forbids generic filler.
-  assert.ok(prompt.includes('generic filler'), prompt.slice(0, 120))
-  assert.ok(prompt.includes('Chinese'), 'language requirement missing')
-})
-
 check('a short draft gets a real tail when one exists', () => {
   const { parseComposeReply } = host.__test
   // Three characters of genuine continuation are kept (that is the ghost text).
@@ -271,109 +252,6 @@ check('a next-message with no link to the conversation is dropped', () => {
   assert.ok(groundedness('语言设置那部分改完了吗', context) >= MIN_GROUNDEDNESS)
   // Off-topic: nothing in common.
   assert.ok(groundedness('明天上海天气怎么样，要不要带伞', context) < MIN_GROUNDEDNESS)
-})
-
-check('the typed text decides the language of completions and rewrites', () => {
-  const { languageOfDraft, parseComposeReply } = host.__test
-
-  // The draft is the only signal: pure text, mixed text, and edge cases.
-  assert.equal(languageOfDraft('帮我把日志整理一下'), 'zh')
-  assert.equal(languageOfDraft('fix the flaky test'), 'en')
-  assert.equal(languageOfDraft('用 DSH 的 plugin 系统抓一下'), 'zh')      // mostly Chinese
-  assert.equal(languageOfDraft('call the API 然后把结果写回 csv 文件里'), 'zh')
-  assert.equal(languageOfDraft('run the tests after you patch the auth module'), 'en')
-  assert.equal(languageOfDraft(''), '')
-  assert.equal(languageOfDraft('，。'), '')
-
-  // A Chinese draft may not be completed or rewritten in English.
-  assert.equal(parseComposeReply(' and rerun the suite', '帮我修一下这个测试'), null)
-  assert.equal(parseComposeReply('REWRITE: Fix the flaky test in auth', '帮我修一下这个测试'), null)
-  // An English draft may not be rewritten in Chinese.
-  assert.equal(parseComposeReply('REWRITE: 把这个测试修一下', 'fix the flaky test'), null)
-  // The matching languages pass.
-  assert.equal(parseComposeReply('REWRITE: 把这个不稳定的测试修一下', '帮我修一下这个测试')?.mode, 'full')
-  assert.equal(parseComposeReply('REWRITE: Make this test deterministic', 'fix the flaky test')?.mode, 'full')
-})
-
-check('the language setting overrides every heuristic', () => {
-  const { resolveLanguage, rankCandidates, wrongLanguage } = host.__test
-
-  // A chosen language beats the profile, the locale and the draft.
-  assert.equal(resolveLanguage({ profile: { language: 'en' }, locale: 'en-US', forced: 'zh' }), 'zh')
-  assert.equal(resolveLanguage({ profile: { language: 'zh' }, locale: 'zh-CN', forced: 'en' }), 'en')
-  // 'auto' falls back to the old chain.
-  assert.equal(resolveLanguage({ profile: { language: 'zh' }, locale: 'en-US', forced: '' }), 'zh')
-
-  // Forced: an English answer is dropped and the list stays empty (the user asked
-  // for that language, so silence is honest).
-  const forcedZh = rankCandidates(
-    ['Skip the rest and paste the trace.', 'Let me rerun the suite first.'],
-    { profile: { count: 0 }, locale: 'zh-CN', forced: 'zh' },
-  )
-  assert.deepEqual(forcedZh, [])
-
-  // Inferred: the same list still shows something.
-  const autoZh = rankCandidates(
-    ['Skip the rest and paste the trace.', 'Let me rerun the suite first.'],
-    { profile: { count: 0 }, locale: 'zh-CN', forced: '' },
-  )
-  assert.ok(autoZh.length > 0)
-
-  // A Chinese draft with an English tail is refused when Chinese is forced.
-  assert.equal(wrongLanguage(' and make it deterministic.', 'zh'), true)
-})
-
-check('the language gate holds even without a transcript', () => {
-  const { resolveLanguage, wrongLanguage, rankCandidates, parseComposeReply } = host.__test
-
-  // No style profile at all (Host holds no transcript): the browser locale decides.
-  assert.equal(resolveLanguage({ profile: { count: 0 }, locale: 'zh-CN' }), 'zh')
-  assert.equal(resolveLanguage({ profile: { count: 0 }, locale: 'en-US' }), 'en')
-  assert.equal(resolveLanguage({ profile: { count: 0 }, locale: '', draft: '帮我看看' }), 'zh')
-
-  // Mostly-Latin text counts as English even when it carries a few Chinese words.
-  assert.equal(wrongLanguage('Skip all three for now（先跳过）', 'zh'), true)
-  assert.equal(wrongLanguage('把日志贴上来，我看一下', 'zh'), false)
-  assert.equal(wrongLanguage('OK', 'zh'), false, 'very short replies are tolerated')
-
-  // The wrong-language candidates lose to the right-language one...
-  const ranked = rankCandidates(
-    ['Skip the rest and paste the trace.', '把剩下的日志贴上来我看一下'],
-    { profile: { count: 0 }, locale: 'zh-CN' },
-  )
-  assert.equal(ranked[0], '把剩下的日志贴上来我看一下', JSON.stringify(ranked))
-  // ...but an all-English answer is still shown: a heuristic must never leave
-  // the user with silence (that outage is exactly what happened in 0.17.1).
-  const onlyEnglish = rankCandidates(
-    ['Skip the rest and paste the trace.', 'Let me rerun the suite first.'],
-    { profile: { count: 0 }, locale: 'zh-CN' },
-  )
-  assert.ok(onlyEnglish.length > 0, 'silence is worse than the wrong language')
-
-  // A Chinese draft cannot be finished in English, locale or not.
-  assert.equal(parseComposeReply(' and make it deterministic.', '帮我修一下这个测试'), null)
-  assert.equal(parseComposeReply('，把复现步骤贴一下。', '帮我修一下这个测试')?.mode, 'append')
-})
-
-check('a suggestion never switches language on the user', () => {
-  const { scriptOf, rankCandidates, parseComposeReply } = host.__test
-  assert.equal(scriptOf('帮我把日志整理一下'), 'zh')
-  assert.equal(scriptOf('fix the flaky test'), 'en')
-  assert.equal(scriptOf('OK'), 'en')
-  assert.equal(scriptOf('帮我看下 fix'), 'mixed')
-
-  const profile = { count: 9, avgChars: 20, language: 'zh', usesGreeting: false }
-  const ranked = rankCandidates(
-    ['Skip all three for now. The two remaining issues are the leading comma and the csv case.', '先把这三条都跳过，然后把剩下两个问题说完。'],
-    { profile, lastAssistant: 'The draft is fine.', lastUser: '继续' },
-  )
-  assert.deepEqual(ranked, ['先把这三条都跳过，然后把剩下两个问题说完。'], JSON.stringify(ranked))
-
-  // A Chinese draft must not be finished in English.
-  assert.equal(parseComposeReply(' and make it deterministic.', '帮我修一下这个不稳定的测试'), null)
-  // ...but an English draft with an English tail is fine.
-  const kept = parseComposeReply(' and make it deterministic.', 'fix the flaky test')
-  assert.equal(kept?.text, 'fix the flaky test and make it deterministic.')
 })
 
 check('model commentary is never offered as a completion', () => {
@@ -1074,6 +952,48 @@ check('a stored suggestion from an older transcript is refused', () => {
   assert.equal(loadSuggestion('s1', 'next', '', '5:180'), null)
   // The version is derived from the event list.
   assert.equal(transcriptVersion([{ type: 'user/message', seq: 4 }]), '1:4')
+})
+
+check('the language setting decides; the system language is the fallback', () => {
+  const { resolveLanguage, rankCandidates, parseComposeReply } = host.__test
+
+  // Setting first, then the browser locale. Nothing else is consulted.
+  assert.equal(resolveLanguage({ forced: 'zh', locale: 'en-US' }), 'zh')
+  assert.equal(resolveLanguage({ forced: 'en', locale: 'zh-CN' }), 'en')
+  assert.equal(resolveLanguage({ locale: 'zh-CN' }), 'zh')
+  assert.equal(resolveLanguage({ locale: 'en-GB' }), 'en')
+  assert.equal(resolveLanguage({}), '')
+
+  // With Chinese chosen, English candidates are dropped and Chinese ones stay.
+  const chosen = rankCandidates(
+    ['Skip all three for now.', '先把这三条都跳过，剩下两个问题稍后再说。'],
+    { locale: 'zh-CN', forced: 'zh' },
+  )
+  assert.equal(chosen[0], '先把这三条都跳过，剩下两个问题稍后再说。', JSON.stringify(chosen))
+
+  // A completion and a rewrite both obey the same choice.
+  assert.equal(parseComposeReply(' and rerun the suite', '帮我修一下这个测试', { language: 'zh' }), null)
+  assert.equal(parseComposeReply('REWRITE: Fix the flaky test', '帮我修一下这个测试', { language: 'zh' }), null)
+  assert.equal(parseComposeReply('REWRITE: 把这个不稳定的测试修一下', '帮我修一下这个测试', { language: 'zh' })?.mode, 'full')
+  // English chosen: a Chinese tail is refused even for a Chinese draft.
+  assert.equal(parseComposeReply('，再看一下日志', '帮我把日志整理一下', { language: 'en' }), null)
+})
+
+check('the short-draft prompt names the chosen language and the conversation', () => {
+  const { buildShortDraftPrompt } = host.__test
+  const prompt = buildShortDraftPrompt({
+    draft: '再',
+    context: JSON.stringify([{ role: 'assistant', text: '语言设置只影响空输入时的建议。' }]),
+    digest: { thesis: '把插件的语言设置拆开', recentUserMessages: ['补写跟随草稿'] },
+    assistant: '语言设置只影响空输入时的建议，补写跟随已有文本。',
+    style: { count: 6, avgChars: 20, language: 'zh', usesGreeting: false },
+    language: 'zh',
+  })
+  assert.ok(prompt.includes('语言设置只影响空输入时的建议'), 'transcript missing')
+  assert.ok(prompt.includes('把插件的语言设置拆开'), 'digest missing')
+  assert.ok(prompt.includes('补写跟随已有文本'), 'assistant missing')
+  assert.ok(prompt.includes('generic filler'), 'anti-filler rule missing')
+  assert.ok(prompt.includes('Chinese'), 'language missing')
 })
 
 check('acceptance feedback reorders candidates, never invents them', () => {

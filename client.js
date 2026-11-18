@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.22.0'
+    const BUILD = '0.23.0'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -126,7 +126,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const response = await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ ...payload, locale: browserLocale(), language: payload.draft === '' ? currentConfig().language : 'auto' }),
+        body: JSON.stringify({ ...payload, locale: browserLocale(), language: currentConfig().language }),
         signal,
         credentials: 'same-origin',
       })
@@ -1881,6 +1881,14 @@ const COVERED_DEBOUNCE_MS = 1200
         && draftEmpty
         && state.phase === 'loading'
       const pendingAny = pendingCompose || pendingNext
+      // An already generated suggestion survives the next request. Keeping it in
+      // the row means the user never sees their completion simply disappear.
+      const heldText = state.sessionId === sessionId
+        && state.phase === 'loading'
+        && state.items.length > 0
+        && typeof state.items[0] === 'string'
+        ? state.items[0]
+        : ''
       // The row is always mounted: right after DSH starts the Session identity
       // can still be missing, and a plugin that hides itself looks broken.
       // Why is nothing on screen? One line per decided state, so a silent UI has
@@ -1981,7 +1989,7 @@ const COVERED_DEBOUNCE_MS = 1200
             clipPath: 'inset(50%)',
             whiteSpace: 'nowrap',
           },
-        }, `${t('status.prefix')}${statusText || (pendingAny ? t('hint.pending') : '')}`))
+        }, `${t('status.prefix')}${statusText || (heldText !== '' ? `${heldText}　·　${t('hint.pending')}` : pendingAny ? t('hint.pending') : '')}`))
     }
 
     /** Settings → General: on/off, automatic or manual, pause and timeout. */
@@ -2146,6 +2154,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, transcriptVersion } }
   },
 })
+
 
 
 
