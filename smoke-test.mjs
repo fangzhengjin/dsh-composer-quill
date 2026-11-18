@@ -283,6 +283,29 @@ check('candidates are ranked by fit, not by model order', () => {
   assert.notEqual(ranked[0], '好的，我来看看这个问题的具体情况吧。', JSON.stringify(ranked))
 })
 
+check('a long session keeps the topic the draft is about', () => {
+  const { transcriptOf, sessionDigest } = host.__test
+  const events = []
+  for (let turn = 1; turn <= 20; turn += 1) {
+    events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第${turn}轮：请帮我看一下 CSV 导出脚本的时区问题，编号 ${turn}` }] } })
+    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第${turn}轮回答：时区问题通常是 UTC 与本地时间混用导致的。` }] } } })
+  }
+  for (let turn = 21; turn <= 30; turn += 1) {
+    events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第${turn}轮：帮我看看这个前端报错怎么修，编号 ${turn}` }] } })
+    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第${turn}轮回答：前端问题通常和依赖版本有关。` }] } } })
+  }
+  const draft = '再帮我看下 CSV 导出的时区'
+  const plain = transcriptOf(events, { rows: 10, chars: 3200 })
+  const focused = transcriptOf(events, { rows: 10, chars: 3200, focus: draft })
+  assert.equal((plain.match(/CSV/g) ?? []).length, 0, 'without focus the topic is out of the window')
+  assert.ok((focused.match(/CSV/g) ?? []).length >= 1, 'focus must pull the topic back in')
+  assert.ok(focused.length <= 3400, `window grew too much: ${focused.length}`)
+
+  const digest = sessionDigest(events)
+  assert.ok(digest.thesis.includes('CSV'), JSON.stringify(digest))
+  assert.equal(digest.recentUserMessages.length, 3)
+})
+
 check('the diagnostic log rotates once it grows', () => {
   const { rotateLog, LOG_MAX_BYTES } = host.__test
   const file = `${tmpdir()}/ghost-log-test-${process.pid}.log`
