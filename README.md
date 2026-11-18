@@ -57,6 +57,7 @@ dsh plugin --profile desktop add "C:\path\to\dsh-composer-quill"
 | 停顿（毫秒） | 250 | 打字后多久发请求，80–2000 |
 | 超时（毫秒） | 20000 | 单次请求超时，3000–60000 |
 | 手动触发 | — | 编辑器聚焦时按 `Ctrl+Shift+Space`，任何模式下都可用 |
+| 语言 | 跟随系统 | 跟随系统 / 中文 / English。指定后**强制**输出该语言；草稿语言不同则整段翻译 |
 | 采纳反馈 | 自动学习 | 设置页显示「已采纳/已展示」；Tab 采纳、Esc 忽略、没采纳就发送都会计入，用于重排「下一句」候选 |
 
 配置存在 `localStorage` 的 `dsh.composer-quill.config`，旧版本的单开关（`…enabled = '0'`）会自动迁移。所有数值读取时都会夹紧到合法区间。
