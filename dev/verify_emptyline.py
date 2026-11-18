@@ -1,19 +1,41 @@
 """Verify a draft ending with a newline gets a tail ghost on the empty line."""
 
+import os
+from pathlib import Path
 import json
 import sys
 import time
 from playwright.sync_api import sync_playwright
 
 URL = sys.argv[1] if len(sys.argv) > 1 else ""
-CHROME = r"%USERPROFILE%\AppData\Local\ms-playwright\chromium-1148\chrome-win\chrome.exe"
+def _chrome_path():
+    """Chromium for Playwright, located at runtime instead of hard-coded."""
+    override = os.environ.get("DSH_CHROME")
+    if override:
+        return override
+    roots = [
+        Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")) if os.environ.get("PLAYWRIGHT_BROWSERS_PATH") else None,
+        Path.home() / "AppData" / "Local" / "ms-playwright",
+        Path.home() / ".cache" / "ms-playwright",
+    ]
+    patterns = ["chromium-*/chrome-win/chrome.exe", "chromium-*/chrome-linux/chrome", "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium"]
+    for root in roots:
+        if root is None or not root.exists():
+            continue
+        for pattern in patterns:
+            for candidate in sorted(root.glob(pattern), reverse=True):
+                return str(candidate)
+    return None
+
+
+CHROME = _chrome_path()
 
 
 def main() -> int:
     if not URL:
         return 2
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, executable_path=CHROME)
+        browser = p.chromium.launch(headless=True, executable_path=CHROME or None)
         page = browser.new_page(viewport={"width": 1280, "height": 800}, device_scale_factor=1)
         page.goto(URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_selector("[data-composer-input]", timeout=45000)

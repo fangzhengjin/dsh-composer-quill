@@ -5,15 +5,37 @@ asks the plugin's own /predict for a completion, and compares the suggestion
 with what the user actually typed next.
 """
 
+import os
+from pathlib import Path
 import difflib
 import json
 import sys
 import urllib.request
 from playwright.sync_api import sync_playwright
 
-ORIGIN = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:53069"
+ORIGIN = sys.argv[1] if len(sys.argv) > 1 else ""
 SESSION = sys.argv[2] if len(sys.argv) > 2 else "session-e109cb4e-09d1-4d28-bb47-87ca65519fa8"
-CHROME = r"%USERPROFILE%\AppData\Local\ms-playwright\chromium-1148\chrome-win\chrome.exe"
+def _chrome_path():
+    """Chromium for Playwright, located at runtime instead of hard-coded."""
+    override = os.environ.get("DSH_CHROME")
+    if override:
+        return override
+    roots = [
+        Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")) if os.environ.get("PLAYWRIGHT_BROWSERS_PATH") else None,
+        Path.home() / "AppData" / "Local" / "ms-playwright",
+        Path.home() / ".cache" / "ms-playwright",
+    ]
+    patterns = ["chromium-*/chrome-win/chrome.exe", "chromium-*/chrome-linux/chrome", "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium"]
+    for root in roots:
+        if root is None or not root.exists():
+            continue
+        for pattern in patterns:
+            for candidate in sorted(root.glob(pattern), reverse=True):
+                return str(candidate)
+    return None
+
+
+CHROME = _chrome_path()
 
 
 def fetch_json(page, path, payload):
@@ -33,7 +55,7 @@ def fetch_json(page, path, payload):
 
 def main() -> int:
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, executable_path=CHROME)
+        browser = p.chromium.launch(headless=True, executable_path=CHROME or None)
         page = browser.new_page()
         page.goto(ORIGIN + "/", wait_until="domcontentloaded", timeout=30000)
 

@@ -8,12 +8,35 @@ Covers the merged entry: one proposal per pause, shown as an inline tail when it
 extends the draft, and as a dock chip rewrite when it also changes the draft.
 """
 
+import os
 import json
 import sys
+from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-URL = "file:///%USERPROFILE%/Documents/deepseek-harness/default-workspace/dsh-composer-quill/dev/harness/index.html"
-CHROME = r"%USERPROFILE%\AppData\Local\ms-playwright\chromium-1148\chrome-win\chrome.exe"
+HARNESS = Path(__file__).resolve().parent / "harness" / "index.html"
+URL = HARNESS.as_uri()
+def _chrome_path():
+    """Chromium for Playwright, located at runtime instead of hard-coded."""
+    override = os.environ.get("DSH_CHROME")
+    if override:
+        return override
+    roots = [
+        Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")) if os.environ.get("PLAYWRIGHT_BROWSERS_PATH") else None,
+        Path.home() / "AppData" / "Local" / "ms-playwright",
+        Path.home() / ".cache" / "ms-playwright",
+    ]
+    patterns = ["chromium-*/chrome-win/chrome.exe", "chromium-*/chrome-linux/chrome", "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium"]
+    for root in roots:
+        if root is None or not root.exists():
+            continue
+        for pattern in patterns:
+            for candidate in sorted(root.glob(pattern), reverse=True):
+                return str(candidate)
+    return None
+
+
+CHROME = _chrome_path()
 
 
 def dump(page, label):
@@ -26,7 +49,7 @@ def dump(page, label):
 def main() -> int:
     console: list[str] = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, executable_path=CHROME)
+        browser = p.chromium.launch(headless=True, executable_path=CHROME or None)
         page = browser.new_page(viewport={"width": 900, "height": 420})
         page.on("console", lambda m: console.append(f"{m.type}: {m.text}"))
         page.on("pageerror", lambda e: console.append(f"pageerror: {e}"))

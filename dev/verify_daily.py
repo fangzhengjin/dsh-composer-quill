@@ -7,13 +7,36 @@ composition, Esc, Tab, Enter) and records every UI state change at 50 ms.
 Each scenario prints PASS/FAIL with the evidence used.
 """
 
+import os
 import json
 import sys
+from pathlib import Path
 import time
 from playwright.sync_api import sync_playwright
 
-URL = "file:///%USERPROFILE%/Documents/deepseek-harness/default-workspace/dsh-composer-quill/dev/harness/index.html"
-CHROME = r"%USERPROFILE%\AppData\Local\ms-playwright\chromium-1148\chrome-win\chrome.exe"
+HARNESS = Path(__file__).resolve().parent / "harness" / "index.html"
+URL = HARNESS.as_uri()
+def _chrome_path():
+    """Chromium for Playwright, located at runtime instead of hard-coded."""
+    override = os.environ.get("DSH_CHROME")
+    if override:
+        return override
+    roots = [
+        Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")) if os.environ.get("PLAYWRIGHT_BROWSERS_PATH") else None,
+        Path.home() / "AppData" / "Local" / "ms-playwright",
+        Path.home() / ".cache" / "ms-playwright",
+    ]
+    patterns = ["chromium-*/chrome-win/chrome.exe", "chromium-*/chrome-linux/chrome", "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium"]
+    for root in roots:
+        if root is None or not root.exists():
+            continue
+        for pattern in patterns:
+            for candidate in sorted(root.glob(pattern), reverse=True):
+                return str(candidate)
+    return None
+
+
+CHROME = _chrome_path()
 
 results: list[tuple[str, bool, str]] = []
 
@@ -43,7 +66,7 @@ def proposal_of(snap):
 
 def main() -> int:
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, executable_path=CHROME)
+        browser = p.chromium.launch(headless=True, executable_path=CHROME or None)
         page = browser.new_page(viewport={"width": 980, "height": 480})
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)))

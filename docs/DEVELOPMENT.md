@@ -31,7 +31,8 @@ dev/verify_*.py      真机脚本：空行锚点、设置页、刷新复用、�
 
 ```powershell
 # 链接进某个 profile（示例用 ghosttest）
-$dsh = "%USERPROFILE%\.dsh\desktop-preview-test\app\resources\runtime\cli\bin\dsh.cmd"
+# 指向你本机的 DSH 启动器（Windows 桌面预览版的默认位置如下，装到别处就改成你的路径）
+$dsh = "$env:USERPROFILE\.dsh\desktop-preview-test\app\resources\runtime\cli\bin\dsh.cmd"
 & $dsh profile add ghosttest            # 若无
 & $dsh plugin add --link "C:\…\dsh-composer-quill" --profile ghosttest
 

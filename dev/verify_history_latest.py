@@ -1,5 +1,6 @@
 """History completion against the user's most recent conversation."""
 
+import os
 import json
 import sys
 import time
@@ -8,10 +9,31 @@ from playwright.sync_api import sync_playwright
 
 URL = sys.argv[1] if len(sys.argv) > 1 else ""
 TITLE = sys.argv[2] if len(sys.argv) > 2 else "自己写输入补全插件并调试"
-CHROME = r"%USERPROFILE%\AppData\Local\ms-playwright\chromium-1148\chrome-win\chrome.exe"
+def _chrome_path():
+    """Chromium for Playwright, located at runtime instead of hard-coded."""
+    override = os.environ.get("DSH_CHROME")
+    if override:
+        return override
+    roots = [
+        Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")) if os.environ.get("PLAYWRIGHT_BROWSERS_PATH") else None,
+        Path.home() / "AppData" / "Local" / "ms-playwright",
+        Path.home() / ".cache" / "ms-playwright",
+    ]
+    patterns = ["chromium-*/chrome-win/chrome.exe", "chromium-*/chrome-linux/chrome", "chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium"]
+    for root in roots:
+        if root is None or not root.exists():
+            continue
+        for pattern in patterns:
+            for candidate in sorted(root.glob(pattern), reverse=True):
+                return str(candidate)
+    return None
+
+
+CHROME = _chrome_path()
 LOGS = [
-    Path(r"%USERPROFILE%\.dsh\profiles\desktop\composer-quill.log"),
-    Path(r"%USERPROFILE%\.dsh\composer-quill.log"),
+    # The diagnostic log lives under the DSH profile or home directory.
+    Path(os.environ.get("DSH_PROFILE_DIR", Path.home() / ".dsh")) / "composer-quill.log",
+    Path(os.environ.get("DSH_HOME", Path.home() / ".dsh")) / "composer-quill.log",
 ]
 
 
@@ -40,7 +62,7 @@ def main() -> int:
         return 2
     started_at = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, executable_path=CHROME)
+        browser = p.chromium.launch(headless=True, executable_path=CHROME or None)
         page = browser.new_page(viewport={"width": 1280, "height": 900}, device_scale_factor=1)
         page.goto(URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_selector("[data-composer-input]", timeout=45000)
