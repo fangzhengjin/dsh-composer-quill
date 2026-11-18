@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.16.0'
+    const BUILD = '0.16.1'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     const TOKEN_GLOBAL = '__DSH_COMPOSER_QUILL_TOKEN__'
@@ -2064,6 +2064,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary } }
   },
 })
+
 
 
 

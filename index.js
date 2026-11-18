@@ -358,7 +358,14 @@ function rankCandidates(candidates, { profile = {}, lastAssistant = '', lastUser
     return { text, score }
   })
   scored.sort((left, right) => right.score - left.score)
-  return scored.map((entry) => entry.text)
+  const ordered = scored.map((entry) => entry.text)
+  if (ordered.length > 0) return ordered
+  // Every candidate was filtered out. Showing nothing is worse than showing the
+  // model's raw answer: keep the first few, trimmed, without the filters.
+  return (Array.isArray(candidates) ? candidates : [])
+    .map((raw) => (typeof raw === 'string' ? raw.trim() : ''))
+    .filter((text) => text !== '' && !looksLikeMeta(text))
+    .slice(0, 3)
 }
 
 /** The last assistant message: what the user would be reacting to. */
@@ -422,9 +429,12 @@ function parseList(reply, key, limit, max, skipToken) {
     try {
       const parsed = JSON.parse(fenced.slice(start, end + 1))
       if (Array.isArray(parsed?.[key])) list = parsed[key]
-      // Valid JSON without the expected array: do not fall back to a line
+      // Models sometimes wrap the list in a string: accept that instead of
+      // discarding an answer we did receive.
+      else if (typeof parsed?.[key] === 'string' && parsed[key].trim() !== '') list = [parsed[key]]
+      // Valid JSON without the expected field: do not fall back to a line
       // reader, or the whole JSON blob becomes a suggestion.
-      else if (parsed !== null && typeof parsed === 'object') return []
+      else if (parsed !== null && typeof parsed === 'object' && parsed[key] !== undefined) return []
     } catch {
       // Not JSON at all: fall back to a line reader.
     }
@@ -1073,7 +1083,17 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
     const lastUserText = textOfBlocks(lastUser?.data?.content ?? lastUser?.data?.message?.content)
     const candidates = rankCandidates(parseCandidates(text), { profile, lastAssistant: assistant, lastUser: lastUserText })
     const value = { kind, candidates, model: route }
-    if (candidates.length === 0) value.reason = 'skipped'
+    if (candidates.length === 0) {
+      value.reason = 'skipped'
+      // Which stage ate them? raw shape, parse result, profile language.
+      trace('next-empty', {
+        sessionId: session?.id ?? session?.sessionId ?? null,
+        rawLength: typeof text === 'string' ? text.length : 0,
+        parsed: parseCandidates(text).length,
+        profileLanguage: profile.language ?? 'n/a',
+        rawHead: typeof text === 'string' ? text.slice(0, 120) : '',
+      })
+    }
     remember(key, value)
     return value
   }

@@ -819,6 +819,21 @@ await checkAsync('trailing newline still yields a tail proposal', async () => {
   })
 }
 
+check('an answer from the model is never thrown away entirely', () => {
+  const { parseCandidates, rankCandidates } = host.__test
+  // A string where a list was expected is still usable.
+  assert.deepEqual(parseCandidates('{"candidates":"先看日志"}'), ['先看日志'])
+  // Filters may not empty the list: the raw answer survives.
+  const filtered = rankCandidates(['Please paste the full stack trace here.', '另一个候选也不算短'], {
+    profile: { language: 'zh', avgChars: 20, usesGreeting: false },
+    lastAssistant: '没问题',
+  })
+  assert.ok(filtered.length > 0, 'every candidate was dropped')
+  // Model commentary is still never offered.
+  const metaOnly = rankCandidates(['The draft is already complete and sound.'], { profile: {}, lastAssistant: '' })
+  assert.deepEqual(metaOnly, [])
+})
+
 check('acceptance feedback reorders candidates, never invents them', () => {
   const { featuresOf, rankByLearning, recordOutcome, learningSummary } = moduleExports.__test
   window.localStorage.clear()
