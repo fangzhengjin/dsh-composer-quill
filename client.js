@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.14.3'
+    const BUILD = '0.14.4'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     const TOKEN_GLOBAL = '__DSH_COMPOSER_QUILL_TOKEN__'

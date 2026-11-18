@@ -170,6 +170,11 @@
 ## 10. 已知限制
 
 1. 依赖宿主 `ctx.agents.get(sessionId)` 的「会话活性」：冷启动后未加载过的旧会话拿不到建议（表现为退避后静默）。
+   实测：`dsh web` 单进程里由浏览器新建的会话，宿主侧 `Session` 只有 3 条引导事件
+   （`permission/preset`、`sandbox/mode`、`approval/policy`），`snapshotEvents()` 与
+   `deriveMessages()` 都不含对话内容，因此 `/history` 返回 0 条、`next` 报 `empty-thread`。
+   桌面端（长驻宿主、会话被加载过）正常：实测同一会话返回 89 条历史。`logs` 里的
+   `events: 3` 就是这个状态的特征。
 2. `snapshotEvents()` 的语义（是否原地改写）未在代码中验证；缓存键以「事件数 + 末事件 seq」近似 transcript 版本。
 3. 退避与超时都是经验值，未按模型实际延迟自适应。
 4. 单个会话的 next 候选最多 3 条（`MAX_CANDIDATES`），无法翻页取更多。

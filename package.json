@@ -1,6 +1,6 @@
 {
   "name": "dsh-composer-quill",
-  "version": "0.14.3",
+  "version": "0.14.4",
   "private": true,
   "type": "module",
   "description": "Ghost completion for the DeepSeek Harness composer: predicts your next message and completes what you are typing.",

@@ -455,6 +455,22 @@ const cache = new Map()
 /** Negative outcomes are cheap to recompute and must not pin a draft for minutes. */
 const NEGATIVE_TTL_MS = 10_000
 
+/** The richest event list the Session exposes, whichever accessor has it. */
+function eventsOf(session) {
+  const sources = []
+  for (const read of [() => session?.snapshotEvents?.(), () => session?.ownEvents?.(), () => session?.events]) {
+    try {
+      const value = read()
+      if (Array.isArray(value)) sources.push(value)
+    } catch {
+      // A throwing accessor must not hide the others.
+    }
+  }
+  let best = []
+  for (const list of sources) if (list.length > best.length) best = list
+  return best
+}
+
 function cacheKey(sessionId, mode, draft, events, route) {
   const last = Array.isArray(events) && events.length > 0 ? events[events.length - 1] : null
   // Switching the model produces no Session event: without the route in the key
@@ -656,7 +672,7 @@ async function composeStream(ctx, { sessionId, draft }, res, signal) {
     const agent = ctx.agents.get(sessionId)
     if (agent === null || agent === undefined) throw httpError('Session is not live in this Host', 409)
     const session = agent.session
-    const events = session?.snapshotEvents?.() ?? session?.ownEvents?.() ?? session?.events ?? []
+    const events = eventsOf(session)
     const cleanDraft = typeof draft === 'string' ? draft.slice(0, MAX_DRAFT_CHARS) : ''
     if (cleanDraft.trim() === '') throw httpError('draft is required for a compose request', 400)
     const key = cacheKey(sessionId, 'compose', cleanDraft, events, routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx))
@@ -850,7 +866,7 @@ async function predict(ctx, { sessionId, draft, mode }, signal) {
   const agent = ctx.agents.get(sessionId)
   if (agent === null || agent === undefined) throw httpError('Session is not live in this Host', 409)
   const session = agent.session
-  const events = session?.snapshotEvents?.() ?? session?.ownEvents?.() ?? session?.events ?? []
+  const events = eventsOf(session)
   const hasTurns = Array.isArray(events) && events.some((event) => event?.type === 'user/message' || event?.type === 'assistant/message')
   const cleanDraft = typeof draft === 'string' ? draft.slice(0, MAX_DRAFT_CHARS) : ''
 
@@ -1090,9 +1106,9 @@ async function handleHistory(ctx, token, req, res) {
     const agent = ctx.agents.get(sessionId)
     if (agent === null || agent === undefined) throw httpError('Session is not live in this Host', 409)
     const session = agent.session
-    const events = session?.snapshotEvents?.() ?? session?.ownEvents?.() ?? session?.events ?? []
+    const events = eventsOf(session)
     const items = historyOf(events)
-    trace('history', { sessionId, items: items.length })
+    trace('history', { sessionId, items: items.length, events: events.length })
     respond(res, 200, { items })
   } catch (error) {
     if (error?.[ABORTED] === true) {
@@ -1213,7 +1229,7 @@ export function apply(ctx) {
 }
 
 /** Pure helpers exposed for the offline smoke test. */
-export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized }
+export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, eventsOf, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized }
 
 
 

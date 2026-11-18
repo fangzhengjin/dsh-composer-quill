@@ -1,36 +1,24 @@
-"""Real-instance check: local history completion fills the gap before the model."""
+"""History completion on a live session: seed a message, then complete its prefix.
 
-import json
-import re
+Two things this proves that the mock cannot:
+  1. the Host's /history returns this Session's own messages after a turn;
+  2. typing the prefix of an earlier message produces an *instant* suggestion
+     (no /predict request), labelled as history.
+"""
+
 import sys
 import time
-from pathlib import Path
+from collections import Counter
 from playwright.sync_api import sync_playwright
 
 URL = sys.argv[1] if len(sys.argv) > 1 else ""
 CHROME = r"%USERPROFILE%\AppData\Local\ms-playwright\chromium-1148\chrome-win\chrome.exe"
-LOGS = [
-    Path(r"%USERPROFILE%\.dsh\profiles\desktop\composer-quill.log"),
-    Path(r"%USERPROFILE%\.dsh\composer-quill.log"),
-]
 
+SEED = "请统计这个工作目录里一共有多少个文件，并按扩展名分组给我"
+PREFIX = SEED[:6]
 
-def last_session_id():
-    newest = None
-    for path in LOGS:
-        if not path.exists():
-            continue
-        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines()[-200:]:
-            if '"stage":"dock"' not in line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            sid = entry.get("sessionId")
-            if sid and (newest is None or entry["at"] > newest[0]):
-                newest = (entry["at"], sid)
-    return newest[1] if newest else None
+CHIP = "() => (document.querySelector('[data-composer-quill=\"dock-suggestion\"]') || {}).textContent || ''"
+PREDICTS = "() => performance.getEntriesByType('resource').filter((e) => e.name.includes('/predict')).length"
 
 
 def main() -> int:
@@ -38,100 +26,88 @@ def main() -> int:
         return 2
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, executable_path=CHROME)
-        page = browser.new_page(viewport={"width": 1280, "height": 800}, device_scale_factor=1)
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, device_scale_factor=1)
         page.goto(URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_selector("[data-composer-input]", timeout=45000)
-        page.wait_for_timeout(1800)
+        page.wait_for_timeout(1500)
         for label in ("继续", "Continue", "知道了"):
             button = page.locator(f"button:has-text('{label}')")
             if button.count() > 0:
                 button.first.click()
-                page.wait_for_timeout(500)
+                page.wait_for_timeout(400)
                 break
 
-        # Walk the sidebar until a conversation with history turns up.
-        items = page.locator("aside a")
-        print("sidebar items:", items.count())
-        session_id = None
-        history = {"items": []}
-        for index in range(1, min(items.count(), 8)):
-            items.nth(index).click()
-            page.wait_for_timeout(1400)
-            candidate = last_session_id()
-            if not candidate:
-                continue
-            data = page.evaluate(
-                """async (sessionId) => {
-                    const token = window.__DSH_COMPOSER_QUILL_TOKEN__ || '';
-                    const response = await fetch('/composer-quill/history', {
-                        method: 'POST',
-                        headers: { 'content-type': 'application/json', 'x-composer-quill-token': token },
-                        body: JSON.stringify({ sessionId }),
-                    });
-                    if (!response.ok) return { error: response.status };
-                    return await response.json();
-                }""",
-                candidate,
+        def focus_editor():
+            page.evaluate(
+                """() => {
+                    const editor = document.querySelector('[data-composer-input]');
+                    editor.focus();
+                    const range = document.createRange();
+                    range.selectNodeContents(editor);
+                    range.collapse(false);
+                    const selection = window.getSelection();
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                }"""
             )
-            found = len(data.get("items", [])) if isinstance(data, dict) else 0
-            print(f"  item {index}: session={candidate[:20]}… history={found}")
-            if found > 0:
-                session_id = candidate
-                history = data
+
+        # Phase 1 — seed one message so this Session has history.
+        focus_editor()
+        page.keyboard.press("Control+a")
+        page.keyboard.press("Backspace")
+        page.wait_for_timeout(200)
+        for ch in SEED[:12]:
+            page.keyboard.insert_text(ch)
+            page.wait_for_timeout(30)
+        page.keyboard.press("Enter")
+        print("已发送种子消息，等待回合结束…")
+
+        # Wait until the turn is over (the row stops saying 回答中).
+        for _ in range(120):
+            page.wait_for_timeout(500)
+            hint = page.evaluate("() => (document.querySelector('[data-composer-quill=\"dock-hint\"]') || {}).textContent || ''")
+            pending = page.evaluate("() => Boolean(document.querySelector('[data-composer-quill=\"dock-pending\"]'))")
+            busy = "回答中" in hint
+            if not busy and not pending:
                 break
+        page.wait_for_timeout(2000)  # let the post-turn history refresh land
 
-        print("session:", session_id)
-        count = len(history.get("items", [])) if isinstance(history, dict) else 0
-        print("history items:", count)
-        if count == 0:
-            print("SKIP 该会话没有历史消息")
-            browser.close()
-            return 0
-
-        sample = history["items"][-1]["text"]
-        prefix = sample[: max(3, min(8, len(sample) // 2))]
-        print("用前缀:", prefix, "(来自:", sample[:24], ")")
-
-        page.evaluate(
-            """() => {
-                const e = document.querySelector('[data-composer-input]');
-                e.focus();
-                const r = document.createRange(); r.selectNodeContents(e); r.collapse(false);
-                const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
-            }"""
-        )
+        # Phase 2 — type a prefix of the seeded message.
+        focus_editor()
         page.keyboard.press("Control+a")
         page.keyboard.press("Backspace")
         page.wait_for_timeout(300)
+        before = page.evaluate(PREDICTS)
+
         started = time.time()
-        for ch in prefix:
+        for ch in PREFIX:
             page.keyboard.insert_text(ch)
             page.wait_for_timeout(30)
 
-        first = None
-        chip_text = ""
-        while time.time() - started < 3.0:
-            state = page.evaluate(
-                """() => {
-                    const chip = document.querySelector('[data-composer-quill="dock-suggestion"]');
-                    const ghost = document.querySelector('[data-composer-quill="text"]');
-                    return {
-                        chip: chip ? chip.textContent || '' : '',
-                        ghost: ghost && getComputedStyle(ghost).display !== 'none' ? ghost.textContent || '' : '',
-                    };
-                }"""
-            )
-            if state["chip"] or state["ghost"]:
-                first = time.time() - started
-                chip_text = state["chip"] or state["ghost"]
+        chip = ""
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            chip = page.evaluate(CHIP)
+            if chip:
                 break
             page.wait_for_timeout(20)
+        elapsed = round(time.time() - started, 2)
+        after = page.evaluate(PREDICTS)
 
-        elapsed = round(first, 2) if first is not None else None
-        print(f"首个建议耗时: {elapsed}s；内容: {chip_text[:40]!r}")
-        ok = first is not None and first < 0.6
-        print("PASS 历史补全即时出现" if ok else "FAIL 未在 0.6s 内出现")
+        print(f"前缀 {PREFIX!r} → {elapsed}s chip={chip[:40]!r}")
+        print(f"/predict 次数: {before} → {after}")
+        history_hit = "历史" in chip and chip[:1] != ""
+        instant = elapsed < 0.6
+        no_call = after == before
+        ok = history_hit and instant and no_call
+        print(
+            "PASS 历史补全即时命中且不花模型调用"
+            if ok
+            else f"FAIL history={history_hit} instant={instant} no_call={no_call}"
+        )
         page.screenshot(path="history-real.png")
+        page.keyboard.press("Control+a")
+        page.keyboard.press("Backspace")
         browser.close()
         return 0 if ok else 1
 

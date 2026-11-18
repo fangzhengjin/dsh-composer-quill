@@ -112,6 +112,7 @@ cd dev/harness; node node_modules/esbuild/bin/esbuild src.js --bundle --format=i
 | 灰字不增长 | 确认 `paint` 事件是否随 delta 出现（painter 是否订阅了 store） |
 | 采纳后又请求一次 | 看 `dedupe`/`reuse` 是否命中；`lastRequested` 认领是否被提前清空 |
 | 重启后建议没了 | `cache-restored` 的条目数、`composer-quill-cache.json` 是否可写 |
+| `/history` 恒为 0、`next` 报 `empty-thread` | 看日志的 `events` 字段：等于 3（只有引导事件）= 宿主没持有该会话的 transcript，插件无能为力（见 ARCHITECTURE 已知限制 1） |
 
 ### 4.3 环境变量
 
