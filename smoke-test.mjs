@@ -716,7 +716,7 @@ check('hydrate shows a stored suggestion without a request', () => {
 
 check('normalizeConfig clamps and defaults every field', () => {
   const { normalizeConfig } = moduleExports.__test
-  assert.deepEqual(normalizeConfig(null), { enabled: true, mode: 'auto', language: 'auto', debounceMs: 250, timeoutMs: 20000 })
+  assert.deepEqual(normalizeConfig(null), { enabled: true, mode: 'auto', language: 'auto', debounceMs: 120, timeoutMs: 20000 })
   assert.equal(normalizeConfig({ language: 'zh' }).language, 'zh')
   assert.equal(normalizeConfig({ language: 'klingon' }).language, 'auto')
   assert.deepEqual(normalizeConfig({ enabled: false, mode: 'manual', debounceMs: 9999, timeoutMs: 10 }),
@@ -728,7 +728,7 @@ check('normalizeConfig clamps and defaults every field', () => {
 check('settings row renders the mode, pause and timeout controls', () => {
   const tree = unwrap(entryOf('settings.general.item').component({
     t: (key) => key,
-    config: { subscribe: () => () => {}, getSnapshot: () => ({ enabled: true, mode: 'auto', debounceMs: 250, timeoutMs: 20000 }), set: () => {} },
+    config: { subscribe: () => () => {}, getSnapshot: () => ({ enabled: true, mode: 'auto', debounceMs: 120, timeoutMs: 20000 }), set: () => {} },
   }))
   const flat = JSON.stringify(tree)
   for (const marker of ['settings-mode', 'settings-debounce', 'settings-timeout', 'settings.manualHint']) {

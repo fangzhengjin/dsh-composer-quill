@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.21.0'
+    const BUILD = '0.21.1'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -43,7 +43,7 @@ window.__ModuleLoader__.load({
     // Forces a CORS preflight from any other origin; the Host relies on it.
     const CLIENT_HEADER = 'x-composer-quill-client'
       const NEXT_DEBOUNCE_MS = 320
-    const COMPOSE_DEBOUNCE_MS = 250
+    const COMPOSE_DEBOUNCE_MS = 120
 /** While the draft stays inside the on-screen proposal, wait this long. */
 const COVERED_DEBOUNCE_MS = 1200
     const MIN_DRAFT_CHARS = 1
@@ -1524,7 +1524,13 @@ const COVERED_DEBOUNCE_MS = 1200
         if (composing.current) return
         // A response for an older draft is already useless: drop it now instead
         // of letting it land after the new request starts.
-        if (state.phase === 'loading' && state.requested !== null && state.requested !== draft) ghost.cancel()
+        // Cancelling is only right when the reply can no longer apply. A draft that
+        // merely grew (the usual case while typing) keeps the in-flight request
+        // alive: its tail still continues this text, and cancelling meant the user
+        // saw no suggestion at all until they stopped typing.
+        const inFlightFor = state.requested
+        const stillApplies = typeof inFlightFor === 'string' && inFlightFor !== '' && draft.startsWith(inFlightFor)
+        if (state.phase === 'loading' && inFlightFor !== null && inFlightFor !== draft && !stillApplies) ghost.cancel()
         lastRequested.current = draft
         // The draft still lies inside the proposal already on screen: keep using
         // its tail and wait much longer before paying for a new call.
@@ -2140,6 +2146,8 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, transcriptVersion } }
   },
 })
+
+
 
 
 

@@ -1181,7 +1181,7 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
     if (!decided) decide(head)
     const replyRaw = first.text
     const parsed = parseComposeReply(replyRaw, cleanDraft, {
-      language: resolveLanguage({ profile: style, locale, draft: cleanDraft }),
+      language: resolveLanguage({ draft: cleanDraft }),
       allowTail: Array.from(cleanDraft).length >= MIN_TAIL_DRAFT_CHARS,
     })
     if (parsed !== null) {
@@ -1208,16 +1208,16 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
     })
     const sentence = parseSentence(second.text)
     // A sentence in the wrong language is as useless as no sentence.
-    if (sentence !== null && wrongLanguage(sentence, resolveLanguage({ profile: style, locale }))) {
-      send('retract', { mode: 'append' })
+    if (sentence !== null && wrongLanguage(sentence, resolveLanguage({ draft: cleanDraft }))) {
+      send('start', { mode: 'full' })
       remember(key, { kind: 'compose', text: null, reason: 'wrong-language', model: second.route }, NEGATIVE_TTL_MS)
       send('done', { reason: 'unchanged' })
       return
     }
     if (sentence === null) {
-      // Deltas already streamed; retract them or the unvalidated text stays on
-      // screen and Tab would insert it.
-      send('retract', { mode: 'append' })
+      // Start a fresh stream instead of retracting: the client keeps the proposal
+      // on screen until this one produces its first delta, so nothing blinks.
+      send('start', { mode: 'full' })
       remember(key, { kind: 'compose', text: null, reason: 'unchanged', model: second.route }, NEGATIVE_TTL_MS)
       send('done', { reason: 'unchanged' })
       return
@@ -1393,7 +1393,7 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
   ].join('\n\n')
   const { text: reply, route } = await ask(ctx, session, events, COMPOSE_RULES, prompt, signal)
   const parsed = parseComposeReply(reply, cleanDraft, {
-    language: resolveLanguage({ profile: styleProfile(events), locale, draft: cleanDraft }),
+    language: resolveLanguage({ draft: cleanDraft }),
     allowTail: Array.from(cleanDraft).length >= MIN_TAIL_DRAFT_CHARS,
   })
   if (parsed !== null) {
