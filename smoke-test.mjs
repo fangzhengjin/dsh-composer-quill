@@ -216,6 +216,18 @@ check('historyOf keeps the user turns, newest last, without duplicates', () => {
   assert.deepEqual(items.map((item) => item.text), ['把日志按时间排一下', '帮我看看这个报错'])
 })
 
+check('a two-character draft never gets a fragment tail', () => {
+  const { parseComposeReply } = host.__test
+  // Tails are refused when the draft is too short to continue...
+  assert.equal(parseComposeReply('，把日志贴上来', '帮', { allowTail: false }), null)
+  // ...but the same reply is fine once the draft carries enough context.
+  const kept = parseComposeReply('，把日志贴上来', '帮我看看这个报错', { allowTail: true })
+  assert.equal(kept?.mode, 'append')
+  // A rewrite is always acceptable.
+  const rewrite = parseComposeReply('REWRITE: 帮我看看这段代码有什么问题', '帮', { allowTail: false })
+  assert.equal(rewrite?.mode, 'full')
+})
+
 check('the language gate holds even without a transcript', () => {
   const { resolveLanguage, wrongLanguage, rankCandidates, parseComposeReply } = host.__test
 
