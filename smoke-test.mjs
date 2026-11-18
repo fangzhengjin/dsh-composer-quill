@@ -273,6 +273,28 @@ check('a next-message with no link to the conversation is dropped', () => {
   assert.ok(groundedness('明天上海天气怎么样，要不要带伞', context) < MIN_GROUNDEDNESS)
 })
 
+check('the typed text decides the language of completions and rewrites', () => {
+  const { languageOfDraft, parseComposeReply } = host.__test
+
+  // The draft is the only signal: pure text, mixed text, and edge cases.
+  assert.equal(languageOfDraft('帮我把日志整理一下'), 'zh')
+  assert.equal(languageOfDraft('fix the flaky test'), 'en')
+  assert.equal(languageOfDraft('用 DSH 的 plugin 系统抓一下'), 'zh')      // mostly Chinese
+  assert.equal(languageOfDraft('call the API 然后把结果写回 csv 文件里'), 'zh')
+  assert.equal(languageOfDraft('run the tests after you patch the auth module'), 'en')
+  assert.equal(languageOfDraft(''), '')
+  assert.equal(languageOfDraft('，。'), '')
+
+  // A Chinese draft may not be completed or rewritten in English.
+  assert.equal(parseComposeReply(' and rerun the suite', '帮我修一下这个测试'), null)
+  assert.equal(parseComposeReply('REWRITE: Fix the flaky test in auth', '帮我修一下这个测试'), null)
+  // An English draft may not be rewritten in Chinese.
+  assert.equal(parseComposeReply('REWRITE: 把这个测试修一下', 'fix the flaky test'), null)
+  // The matching languages pass.
+  assert.equal(parseComposeReply('REWRITE: 把这个不稳定的测试修一下', '帮我修一下这个测试')?.mode, 'full')
+  assert.equal(parseComposeReply('REWRITE: Make this test deterministic', 'fix the flaky test')?.mode, 'full')
+})
+
 check('the language setting overrides every heuristic', () => {
   const { resolveLanguage, rankCandidates, wrongLanguage } = host.__test
 
