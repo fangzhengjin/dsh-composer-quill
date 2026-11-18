@@ -987,6 +987,17 @@ check('an answer from the model is never thrown away entirely', () => {
   assert.deepEqual(metaOnly, [])
 })
 
+check('a proposal already typed into the editor is stale', () => {
+  const { proposalIsStale } = moduleExports.__test
+  // The exact case from the report: the chip repeated the composer's own text.
+  assert.equal(proposalIsStale('哪 5 条？先列出来我确认一下', '哪 5 条？先列出来我确认一下'), true)
+  assert.equal(proposalIsStale('哪 5 条？先列出来我确认一 下', '哪 5 条？先列出来我确认一 下'), true)
+  // A genuine continuation is not stale.
+  assert.equal(proposalIsStale('里的报错信息提取出来', '帮我把这段日志'), false)
+  assert.equal(proposalIsStale('看一下', ''), false)
+  assert.equal(proposalIsStale('', '看一下'), false)
+})
+
 check('acceptance feedback reorders candidates, never invents them', () => {
   const { featuresOf, rankByLearning, recordOutcome, learningSummary } = moduleExports.__test
   window.localStorage.clear()

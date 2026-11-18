@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.19.0'
+    const BUILD = '0.19.1'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -684,6 +684,17 @@ const COVERED_DEBOUNCE_MS = 1200
         accepted += Number(entry?.accepted ?? 0)
       }
       return { shown, accepted, rate: shown === 0 ? null : accepted / shown }
+    }
+
+    /**
+     * A proposal that already sits in the editor is stale. Right after Tab the
+     * tracked draft lags a frame, so the dock used to show the just-inserted text
+     * again as if it were a suggestion.
+     */
+    function proposalIsStale(proposal, editorText) {
+      const left = String(proposal ?? '').replace(/\s+/g, '')
+      const right = String(editorText ?? '').replace(/\s+/g, '')
+      return left !== '' && right !== '' && left === right
     }
 
     /**
@@ -1592,7 +1603,18 @@ const COVERED_DEBOUNCE_MS = 1200
       const draftBase = draft.replace(/\s+$/, '')
       const remainder = followRemainder(composed, draftBase)
       const fresh = state.forDraft === draft || state.forDraft === draftBase
-      const nextActive = enabled && !running && draftEmpty && state.kind === 'next' && current !== ''
+      // A proposal that is already sitting in the editor is stale: this happens
+      // right after Tab inserted it, while the tracked draft still lags a frame.
+      const liveText = (() => {
+        try {
+          const node = editorEl()
+          return node === null || node === undefined ? draftBase : String(node.textContent ?? '')
+        } catch {
+          return draftBase
+        }
+      })()
+      const alreadyInEditor = proposalIsStale(current, liveText)
+      const nextActive = enabled && !running && draftEmpty && state.kind === 'next' && current !== '' && !alreadyInEditor
       const composeActive = enabled && !running
         && state.kind === 'compose'
         && state.sessionId === sessionId
@@ -2099,9 +2121,10 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary } }
+    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale } }
   },
 })
+
 
 
 
