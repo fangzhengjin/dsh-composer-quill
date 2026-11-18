@@ -26,9 +26,18 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.17.0'
+    const BUILD = '0.17.1'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
+    /** The browser's own language, used when the Host has no style profile. */
+    function browserLocale() {
+      try {
+        return (typeof navigator !== 'undefined' && typeof navigator.language === 'string') ? navigator.language.slice(0, 24) : ''
+      } catch {
+        return ''
+      }
+    }
+
     const TOKEN_GLOBAL = '__DSH_COMPOSER_QUILL_TOKEN__'
     const TOKEN_HEADER = 'x-composer-quill-token'
     // Forces a CORS preflight from any other origin; the Host relies on it.
@@ -113,7 +122,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const response = await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, locale: browserLocale() }),
         signal,
         credentials: 'same-origin',
       })
@@ -189,7 +198,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const response = await fetch(path, {
         method: 'POST',
         headers,
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, locale: browserLocale() }),
         signal,
         credentials: 'same-origin',
       })
@@ -2067,6 +2076,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary } }
   },
 })
+
 
 
 

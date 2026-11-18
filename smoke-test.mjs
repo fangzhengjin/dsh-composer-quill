@@ -216,6 +216,31 @@ check('historyOf keeps the user turns, newest last, without duplicates', () => {
   assert.deepEqual(items.map((item) => item.text), ['把日志按时间排一下', '帮我看看这个报错'])
 })
 
+check('the language gate holds even without a transcript', () => {
+  const { resolveLanguage, wrongLanguage, rankCandidates, parseComposeReply } = host.__test
+
+  // No style profile at all (Host holds no transcript): the browser locale decides.
+  assert.equal(resolveLanguage({ profile: { count: 0 }, locale: 'zh-CN' }), 'zh')
+  assert.equal(resolveLanguage({ profile: { count: 0 }, locale: 'en-US' }), 'en')
+  assert.equal(resolveLanguage({ profile: { count: 0 }, locale: '', draft: '帮我看看' }), 'zh')
+
+  // Mostly-Latin text counts as English even when it carries a few Chinese words.
+  assert.equal(wrongLanguage('Skip all three for now（先跳过）', 'zh'), true)
+  assert.equal(wrongLanguage('把日志贴上来，我看一下', 'zh'), false)
+  assert.equal(wrongLanguage('OK', 'zh'), false, 'very short replies are tolerated')
+
+  // Candidates in the wrong language are dropped, and not resurrected by the fallback.
+  const ranked = rankCandidates(
+    ['Skip the rest and paste the trace.', 'Let me rerun the suite first.'],
+    { profile: { count: 0 }, locale: 'zh-CN' },
+  )
+  assert.deepEqual(ranked, [])
+
+  // A Chinese draft cannot be finished in English, locale or not.
+  assert.equal(parseComposeReply(' and make it deterministic.', '帮我修一下这个测试'), null)
+  assert.equal(parseComposeReply('，把复现步骤贴一下。', '帮我修一下这个测试')?.mode, 'append')
+})
+
 check('a suggestion never switches language on the user', () => {
   const { scriptOf, rankCandidates, parseComposeReply } = host.__test
   assert.equal(scriptOf('帮我把日志整理一下'), 'zh')
