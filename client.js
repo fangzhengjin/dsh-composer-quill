@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.16.1'
+    const BUILD = '0.16.2'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     const TOKEN_GLOBAL = '__DSH_COMPOSER_QUILL_TOKEN__'
@@ -1076,6 +1076,9 @@ const COVERED_DEBOUNCE_MS = 1200
         if (hydratedFor.current === marker) return false
         const items = loadSuggestion(sessionId, kind, forDraft)
         if (items === null || items.length === 0) return false
+        // A single stored suggestion is not worth skipping the request for: the
+        // user would lose the "第 1/N 条" choices.
+        if (kind === 'next' && items.length < 2) return false
         const shown = ghost.hydrate(sessionId, kind, forDraft, items)
         // Only a suggestion that reached the screen may claim the marker: a
         // rejected hydrate (live result, in-flight request) must stay retryable.
@@ -2064,6 +2067,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary } }
   },
 })
+
 
 
 

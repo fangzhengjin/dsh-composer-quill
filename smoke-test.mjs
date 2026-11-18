@@ -703,6 +703,62 @@ await checkAsync('trailing newline still yields a tail proposal', async () => {
     globalThis.fetch = previousFetch
   }
 })
+/** A thin answer (one candidate) is topped up by asking once more. */
+{
+  let calls = 0
+  const session = {
+    id: 's-topup',
+    snapshotEvents: () => ([
+      { type: 'user/message', data: { content: [{ type: 'text', text: '帮我看看这个报错' }] } },
+      { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '先贴出日志。' }] } } },
+    ]),
+    requestHeader: () => ({ config: { provider: 'p', model: 'm' } }),
+  }
+  const ctx = {
+    get: () => undefined,
+    agents: { get: () => ({ session }) },
+    llm: {
+      async *stream() {
+        calls += 1
+        const payload = calls === 1
+          ? '{"candidates":["我贴一下日志"]}'
+          : '{"candidates":["我贴一下日志","顺便说下复现步骤","先看第 42 行附近"]}'
+        yield { type: 'text-delta', text: payload }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+    inject: (_deps, callback) => callback({
+      effect: (fn) => { fn(); return () => {} },
+      on: () => {},
+      webServer: { register: (route) => { if (route.path === '/composer-quill/predict') globalThis.__topupRoute = route; return () => {} } },
+      clientModules: { clientPath: () => '/tmp/x.js', graph: () => ({ entries: [] }) },
+    }),
+  }
+  host.apply(ctx)
+  const route = globalThis.__topupRoute
+
+  const call = () => new Promise((resolve) => {
+    const req = new EventEmitter()
+    req.method = 'POST'
+    req.headers = { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', 'x-composer-quill-client': '1' }
+    const res = new EventEmitter()
+    res.statusCode = 0
+    res.writableEnded = false
+    res.destroyed = false
+    res.setHeader = () => {}
+    res.end = (chunk) => resolve(JSON.parse(chunk))
+    route.handler(req, res)
+    req.emit('data', Buffer.from(JSON.stringify({ sessionId: 's-topup', mode: 'next', draft: '' })))
+    req.emit('end')
+  })
+
+  await checkAsync('a single candidate is topped up to a full set', async () => {
+    const first = await call()
+    assert.ok(first.candidates.length >= 2, JSON.stringify(first))
+    assert.equal(calls, 2, 'a thin answer should trigger exactly one extra call')
+  })
+}
+
 /** Two identical requests in flight must cost one model call. */
 {
   let calls = 0
