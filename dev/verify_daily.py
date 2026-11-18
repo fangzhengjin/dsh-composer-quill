@@ -283,6 +283,32 @@ def main() -> int:
             f"采纳后={after_accept[:12]!r} 清空后 chip={chip[:26]!r} ghost={ghost[:16]!r}",
         )
 
+        # ---- S22 切换会话：键没变时复用存储，而不是重新采样
+        reset("")
+        h("setSession('sess-a')")
+        chip = ""
+        for _ in range(24):
+            page.wait_for_timeout(250)
+            chip = proposal_of(h("snapshot()"))
+            if "按 Tab 采纳" in chip:
+                break
+        first_chip = chip
+        h("setSession('sess-b')")
+        page.wait_for_timeout(1500)
+        # Only look at what happens after coming back to the first Session.
+        h("calls.length = 0")
+        h("setSession('sess-a')")
+        page.wait_for_timeout(2000)
+        hydrated = [c for c in h("calls") if c.get("mode") == "beacon" and c.get("event") == "hydrated"]
+        predicts = [c for c in h("calls") if c.get("mode") in ("next", "compose")]
+        print('   [S22 全部调用]', [(c.get('mode'), c.get('event'), c.get('draft')) for c in h('calls')])
+        again = proposal_of(h("snapshot()"))
+        record(
+            "S22 切回会话命中存储（hydrated）",
+            bool(first_chip) and bool(hydrated) and bool(again),
+            f"首次={first_chip[:14]!r} 切回={again[:14]!r} hydrated={len(hydrated)} 模型请求={[(c.get('mode'), c.get('draft')) for c in predicts]}",
+        )
+
         # ---- S17 dock 行常驻：空闲时也在，且高度不跳
         reset("")
         page.wait_for_timeout(600)
@@ -334,6 +360,8 @@ def main() -> int:
 
         # ---- S20 采纳反馈：学到的偏好会重排候选（但不会新增/丢弃）
         reset("")
+        # The store must not answer this one: the point is to see the ranking run.
+        h('clearSuggestions()')
         # 让「长建议」显得更受欢迎
         h("""setLearning({
             "kind:next": {"shown": 10, "accepted": 9},
@@ -369,4 +397,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+
 

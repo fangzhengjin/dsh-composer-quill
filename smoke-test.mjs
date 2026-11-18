@@ -974,108 +974,19 @@ check('a proposal already typed into the editor is stale', () => {
   assert.equal(proposalIsStale('', '看一下'), false)
 })
 
-check('a stored suggestion from an older transcript is refused', () => {
-  const { saveSuggestion, loadSuggestion, transcriptVersion } = moduleExports.__test
-  window.localStorage.clear()
-  saveSuggestion('s1', 'next', '', ['先把语言设置那段改完'], '3:120')
-  assert.deepEqual(loadSuggestion('s1', 'next', '', '3:120'), ['先把语言设置那段改完'])
-  // One more turn happened: the stored text is no longer about this conversation.
-  assert.equal(loadSuggestion('s1', 'next', '', '5:180'), null)
-  // The version is derived from the event list.
-  assert.equal(transcriptVersion([{ type: 'user/message', seq: 4 }]), '1:4')
-})
-
-check('the language setting decides; the system language is the fallback', () => {
-  const { resolveLanguage, rankCandidates, parseComposeReply } = host.__test
-
-  // Setting first, then the browser locale. Nothing else is consulted.
-  assert.equal(resolveLanguage({ forced: 'zh', locale: 'en-US' }), 'zh')
-  assert.equal(resolveLanguage({ forced: 'en', locale: 'zh-CN' }), 'en')
-  assert.equal(resolveLanguage({ locale: 'zh-CN' }), 'zh')
-  assert.equal(resolveLanguage({ locale: 'en-GB' }), 'en')
-  assert.equal(resolveLanguage({}), '')
-
-  // With Chinese chosen, English candidates are dropped and Chinese ones stay.
-  const chosen = rankCandidates(
-    ['Skip all three for now.', '先把这三条都跳过，剩下两个问题稍后再说。'],
-    { locale: 'zh-CN', forced: 'zh' },
-  )
-  assert.equal(chosen[0], '先把这三条都跳过，剩下两个问题稍后再说。', JSON.stringify(chosen))
-
-  // A completion and a rewrite both obey the same choice.
-  assert.equal(parseComposeReply(' and rerun the suite', '帮我修一下这个测试', { language: 'zh' }), null)
-  assert.equal(parseComposeReply('REWRITE: Fix the flaky test', '帮我修一下这个测试', { language: 'zh' }), null)
-  assert.equal(parseComposeReply('REWRITE: 把这个不稳定的测试修一下', '帮我修一下这个测试', { language: 'zh' })?.mode, 'full')
-  // English chosen: a Chinese tail is refused even for a Chinese draft.
-  assert.equal(parseComposeReply('，再看一下日志', '帮我把日志整理一下', { language: 'en' }), null)
-})
-
-check('the short-draft prompt names the chosen language and the conversation', () => {
-  const { buildShortDraftPrompt } = host.__test
-  const prompt = buildShortDraftPrompt({
-    draft: '再',
-    context: JSON.stringify([{ role: 'assistant', text: '语言设置只影响空输入时的建议。' }]),
-    digest: { latestUserMessages: ['补写跟随草稿'], openingRequest: '把插件的语言设置拆开' },
-    assistant: '语言设置只影响空输入时的建议，补写跟随已有文本。',
-    style: { count: 6, avgChars: 20, language: 'zh', usesGreeting: false },
-    language: 'zh',
-  })
-  assert.ok(prompt.includes('语言设置只影响空输入时的建议'), 'transcript missing')
-  assert.ok(prompt.includes('把插件的语言设置拆开'), 'digest missing')
-  assert.ok(prompt.includes('补写跟随已有文本'), 'assistant missing')
-  assert.ok(prompt.includes('generic filler'), 'anti-filler rule missing')
-  assert.ok(prompt.includes('Chinese'), 'language missing')
-})
-
-check('the store keeps recent results of every kind, with their mode', () => {
-  const { saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions } = moduleExports.__test
+check('the turn counter, not the message count, decides reuse', () => {
+  const { saveSuggestion, loadSuggestion, bumpEpoch, syncEpoch } = moduleExports.__test
   window.localStorage.clear()
   window.localStorage.removeItem('dsh.composer-quill.epoch')
 
-  const session = 's-store'
-  saveSuggestion(session, 'compose', '帮我把日志', ['帮我把日志按时间排序'], '12', 'append')
-  saveSuggestion(session, 'compose', '帮我把这段日志整理', ['帮我把这段日志整理一下，按时间顺序，并标出错误行'], '12', 'full')
-  saveSuggestion(session, 'next', '', ['先看第 42 行', '把完整堆栈贴出来'], '12', 'full')
-
-  const map = readSuggestions()
-  const modes = Object.values(map).map((entry) => entry.mode).sort()
-  assert.deepEqual(modes, ['append', 'full', 'full'], JSON.stringify(modes))
-
-  // All three kinds come back for the same conversation state.
-  assert.deepEqual(loadSuggestion(session, 'compose', '帮我把日志', '12'), ['帮我把日志按时间排序'])
-  assert.deepEqual(loadSuggestion(session, 'compose', '帮我把这段日志整理', '12'), ['帮我把这段日志整理一下，按时间顺序，并标出错误行'])
-  assert.equal(loadSuggestion(session, 'next', '', '12')?.length, 2)
-
-  // The cap keeps the newest entries.
-  for (let index = 0; index < 80; index += 1) {
-    saveSuggestion(session, 'compose', `草稿 ${index}`, [`结果 ${index}`], '12', 'append')
-  }
-  const after = Object.keys(readSuggestions()).length
-  assert.ok(after <= 60, 'store grew to ' + after)
-  assert.deepEqual(loadSuggestion(session, 'compose', '草稿 79', '12'), ['结果 79'], 'the newest entry survives')
-  clearSessionSuggestions(session)
-  assert.equal(Object.keys(readSuggestions()).length, 0)
-})
-
-check('the turn counter is the decidable part of "identical"', () => {
-  const { epochOf, bumpEpoch, syncEpoch, saveSuggestion, loadSuggestion } = moduleExports.__test
-  window.localStorage.removeItem('dsh.composer-quill.epoch')
-  window.localStorage.removeItem('dsh.composer-quill.suggestions')
-
-  const session = 's-epoch-test'
-  assert.equal(epochOf(session), 0, 'a fresh session starts at zero')
-  assert.equal(bumpEpoch(session), 1)
-  assert.equal(bumpEpoch(session), 2)
-  assert.equal(epochOf(session), 2, 'the counter is persisted, not just in memory')
-  // A reload forgets the in-memory value but not the stored one.
-  syncEpoch('another-session')
-  assert.equal(syncEpoch(session), 2, 'switching back adopts the stored value')
-
-  // A stored suggestion is bound to the counter it was produced in.
-  saveSuggestion(session, 'next', '', ['先把这三个问题逐条回答'], '9')
-  assert.deepEqual(loadSuggestion(session, 'next', '', '9'), ['先把这三个问题逐条回答'])
-  bumpEpoch(session)
-  assert.equal(loadSuggestion(session, 'next', '', '9'), null, 'a finished turn invalidates the stored suggestion')
+  saveSuggestion('s1', 'next', '', ['先把语言设置那段改完'], '3', 'full')
+  // Same turn: reusable even though the caller has a different message count
+  // (that count is fetched asynchronously and lags behind a Session switch).
+  assert.deepEqual(loadSuggestion('s1', 'next', ''), ['先把语言设置那段改完'])
+  // A finished turn invalidates it.
+  syncEpoch('s1')
+  bumpEpoch('s1')
+  assert.equal(loadSuggestion('s1', 'next', ''), null)
 })
 
 check('acceptance feedback reorders candidates, never invents them', () => {

@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.29.0'
+    const BUILD = '0.30.0'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -568,14 +568,16 @@ const COVERED_DEBOUNCE_MS = 1200
       writeSuggestions(map)
     }
 
-    function loadSuggestion(sessionId, kind, draft, version = null) {
+    function loadSuggestion(sessionId, kind, draft) {
       if (sessionId === null) return null
       const entry = readSuggestions()[suggestionKey(sessionId, kind, draft, syncEpoch(sessionId))]
       if (entry === null || typeof entry !== 'object' || !Array.isArray(entry.items)) return null
       if (Date.now() - Number(entry.at ?? 0) > SUGGEST_TTL_MS) return null
-      // A suggestion computed for an older transcript is exactly the "this has
-      // nothing to do with the conversation" complaint: refuse it.
-      if (version !== null && String(entry.version ?? '') !== String(version)) return null
+      // The key already carries the Session and the turn counter, so "the
+      // conversation has not advanced" is decided there. Comparing the raw message
+      // count as well refused perfectly good results right after a Session switch
+      // (that count is fetched asynchronously and lags), which is what made
+      // switching Sessions re-sample everything.
       return entry.items.filter((item) => typeof item === 'string' && item !== '')
     }
 
@@ -1191,13 +1193,16 @@ const COVERED_DEBOUNCE_MS = 1200
         if (!enabled || sessionId === null) return false
         const marker = `${kind}|${forDraft}`
         if (hydratedFor.current === marker) return false
-        const items = loadSuggestion(sessionId, kind, forDraft, `${history.items.length}`)
+        const items = loadSuggestion(sessionId, kind, forDraft)
         if (items === null || items.length === 0) return false
         const shown = ghost.hydrate(sessionId, kind, forDraft, items)
         // Only a suggestion that reached the screen may claim the marker: a
         // rejected hydrate (live result, in-flight request) must stay retryable.
         if (shown) {
           hydratedFor.current = marker
+            // The store answered this exact question: a request for it would be pure
+            // waste, so the request path consults this before spending a call.
+            servedFromStore.current = { key: `${kind}|${forDraft}`, at: Date.now() }
           report('hydrated', { sessionId, draftLength: forDraft.length, detail: kind })
         }
         return shown
@@ -1333,6 +1338,8 @@ const COVERED_DEBOUNCE_MS = 1200
       // repeated, and two triggers aimed at the same draft within a moment share
       // one network call.
       const lastCall = React.useRef({ key: '', at: 0 })
+        // Set when the store answered: nothing may be re-sampled for that key.
+        const servedFromStore = React.useRef({ key: '', at: 0 })
       const lastCovered = React.useRef('')
       const learnedShown = React.useRef(null)
       const request = React.useCallback((mode, forDraft, force = false, delayOverride = null) => {
@@ -1343,6 +1350,16 @@ const COVERED_DEBOUNCE_MS = 1200
           if (!live.enabled || live.sessionId === null) return
           if (liveBlocked()) return
           const draftNow = mode === 'next' ? '' : (forDraft || live.draft)
+            {
+              // A stored result for this exact key was just shown: reuse it instead
+              // of paying for a sample that cannot differ.
+              const served = servedFromStore.current
+              const serveKey = `${mode}|${draftNow}`
+              if (served.key === serveKey && Date.now() - served.at < 5000) {
+                report('reuse', { sessionId: live.sessionId, draftLength: draftNow.length, detail: 'store' })
+                return
+              }
+            }
           if (!force) {
             const key = `${mode}|${draftNow}`
             const now = Date.now()
@@ -1531,8 +1548,21 @@ const COVERED_DEBOUNCE_MS = 1200
           // The composer still carries the previous Session's draft until the
           // host swaps it: never ask for a proposal on someone else's text.
           switchDraft.current = latest.current.draft
+          // Hydrate first, while the store is untouched: coming back to a Session
+          // whose conversation has not moved is not a new question, and asking the
+          // model again would show "补写中…" for something already known.
+          if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual'
+            && hydrateStored('next', '')) {
+            ghostLayer.clear()
+            return
+          }
           dismissAll()
-          if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual') request('next', '', true)
+          if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual') {
+            // Nothing stored: this Session genuinely has no answer yet.
+            const shown = ghost.getSnapshot()
+            const alreadyShown = shown.sessionId === sessionId && shown.items.length > 0
+            if (!alreadyShown) request('next', '', true)
+          }
           return
         }
         if (prior.running && !running) {
@@ -1543,7 +1573,9 @@ const COVERED_DEBOUNCE_MS = 1200
           clearSessionSuggestions(sessionId)
           // A retry that was armed for a failed draft is obsolete now.
           retriedFor.current = null
-          if (enabled && draftEmpty && settings.mode !== 'manual') request('next', '', true)
+          if (enabled && draftEmpty && settings.mode !== 'manual') {
+            if (!hydrateStored('next', '')) request('next', '', true)
+          }
         }
         if (running) {
           const shown = learnedShown.current
@@ -1574,7 +1606,10 @@ const COVERED_DEBOUNCE_MS = 1200
             lastRequested.current = null
             // Drop the accepted proposal before asking for a fresh prediction.
             ghost.clear(sessionId)
-            request('next', '', true)
+            // This effect runs before the Session-switch effect, so on a switch the
+            // "draft became empty" case fires first: consult the store before
+            // spending a call, or switching Sessions re-samples everything.
+            if (!hydrateStored('next', '')) request('next', '', true)
           }
           return
         }
@@ -2220,6 +2255,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
 
 
 

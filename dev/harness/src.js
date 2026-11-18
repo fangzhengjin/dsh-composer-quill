@@ -8,7 +8,7 @@ let composeFailures = 0
 
 window.fetch = async (url, init) => {
   const body = init && init.body ? JSON.parse(init.body) : {}
-  calls.push({ url: String(url), mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : 'next'), draft: body.draft ?? '' })
+  calls.push({ url: String(url), mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : 'next'), draft: body.draft ?? '', event: body.event ?? '', detail: body.detail ?? '', sessionId: body.sessionId ?? '' })
   if (String(url).includes('/composer-quill/history')) {
     return {
       ok: true,
@@ -234,6 +234,9 @@ async function main() {
     setLearning(map) {
       window.localStorage.setItem('dsh.composer-quill.learning', JSON.stringify(map))
     },
+    clearSuggestions() {
+      window.localStorage.removeItem('dsh.composer-quill.suggestions')
+    },
     resetLearning() {
       window.localStorage.removeItem('dsh.composer-quill.learning')
     },
@@ -352,5 +355,7 @@ main().catch((error) => {
   window.__harnessError = String((error && error.stack) || error)
   console.error(error)
 })
+
+
 
 

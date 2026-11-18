@@ -818,14 +818,39 @@ function eventsOf(session) {
   return best
 }
 
+function transcriptStamp(events) {
+  const list = Array.isArray(events) ? events : []
+  const tail = []
+  for (let index = list.length - 1; index >= 0 && tail.length < 2; index -= 1) {
+    const event = list[index]
+    if (event?.type !== 'user/message' && event?.type !== 'assistant/message') continue
+    const text = event.type === 'user/message'
+      ? textOfBlocks(event.data?.content ?? event.data?.message?.content)
+      : textOfBlocks(event.data?.message?.content ?? event.data?.content)
+    if (text !== '') tail.unshift(text)
+  }
+  const value = tail.join('\u0000')
+  // FNV-1a: short, stable, and cheap enough to run on every request.
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return `${tail.length}:${hash.toString(36)}`
+}
+
 function cacheKey(sessionId, mode, draft, events, route, language = '', epoch = 0) {
   const last = Array.isArray(events) && events.length > 0 ? events[events.length - 1] : null
   // Switching the model produces no Session event: without the route in the key
   // an answer from the previous model would be replayed for up to two minutes.
   const model = route === undefined ? '' : `${route.provider}/${route.model}`
-  // The language setting changes no Session event, so it has to be part of the
-  // key: without it a suggestion produced for one language is replayed for another.
-  return `${sessionId}|${mode}|${draft}|${Array.isArray(events) ? events.length : 0}|${last?.seq ?? ''}|${model}|${language}|${epoch}`
+  // The key is exactly "the same question": who, which kind, which draft, which
+  // model, which language, and how many turns the conversation has seen. The event
+  // count and last sequence used to be in here too, but this Host's snapshot can lag
+  // or jitter (a Session switching in loads its events a moment later), which made
+  // identical situations miss each other. The turn counter is the authoritative
+  // answer to "has anything happened", so it carries that job alone.
+  return `${sessionId}|${mode}|${draft}|${transcriptStamp(events)}|${model}|${language}|${epoch}`
 }
 
 function cached(key) {
@@ -1044,6 +1069,16 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch }, r
       res.end()
       return
     }
+    // Not cached: record the components, so a missed reuse can be explained.
+    trace('cache-miss', {
+      sessionId,
+      mode: 'compose',
+      events: events.length,
+      seq: events.length > 0 ? (events[events.length - 1]?.seq ?? null) : null,
+      epoch,
+      language: resolveLanguage({ locale, forced }),
+      draftChars: cleanDraft.length,
+    })
     // An identical request is already streaming: wait for it and reuse its
     // result instead of paying for a second model call.
     const inFlight = composeInFlight.get(key)
@@ -1309,6 +1344,15 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0 
     return hit
   }
 
+  trace('cache-miss', {
+    sessionId,
+    mode: kind,
+    events: events.length,
+    seq: events.length > 0 ? (events[events.length - 1]?.seq ?? null) : null,
+    epoch,
+    language: resolveLanguage({ locale, forced }),
+    draftChars: cleanDraft.length,
+  })
   // The browser retries, the safety net and typing jitter can all land on the
   // same draft at once; one model call is enough for all of them.
   const running = inflight.get(key)
