@@ -216,6 +216,25 @@ check('historyOf keeps the user turns, newest last, without duplicates', () => {
   assert.deepEqual(items.map((item) => item.text), ['把日志按时间排一下', '帮我看看这个报错'])
 })
 
+check('the short-draft prompt carries the conversation', () => {
+  const { buildShortDraftPrompt } = host.__test
+  const prompt = buildShortDraftPrompt({
+    draft: '再',
+    context: JSON.stringify([{ role: 'assistant', text: '语言设置只影响空输入时的建议。' }]),
+    digest: { thesis: '把插件的语言设置拆开', recentUserMessages: ['补写跟随草稿'] },
+    assistant: '语言设置只影响空输入时的建议，补写跟随已有文本。',
+    style: { count: 6, avgChars: 20, language: 'zh', usesGreeting: false },
+    language: 'zh',
+  })
+  // Every context piece reached the model...
+  assert.ok(prompt.includes('语言设置只影响空输入时的建议'), 'transcript missing')
+  assert.ok(prompt.includes('把插件的语言设置拆开'), 'digest missing')
+  assert.ok(prompt.includes('补写跟随已有文本'), 'assistant missing')
+  // ...and the instruction forbids generic filler.
+  assert.ok(prompt.includes('generic filler'), prompt.slice(0, 120))
+  assert.ok(prompt.includes('Chinese'), 'language requirement missing')
+})
+
 check('a short draft gets a real tail when one exists', () => {
   const { parseComposeReply } = host.__test
   // Three characters of genuine continuation are kept (that is the ghost text).
