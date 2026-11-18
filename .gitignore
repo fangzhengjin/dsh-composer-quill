@@ -8,6 +8,14 @@ dist/
 composer-quill-cache.json
 composer-quill-cache.json.*.tmp
 
+# 模拟器构建产物（.gitignore 忽略，需本地构建）
+dev/harness/bundle.js
+
+# 验证脚本的截图与输出
+*.png
+daily-out.txt
+smoke-out.txt
+
 # 编辑器与系统
 .vscode/
 .idea/

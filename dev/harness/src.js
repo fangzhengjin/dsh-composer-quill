@@ -1,0 +1,348 @@
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+
+const calls = []
+window.__harnessCalls = calls
+let composeMode = 'ok'
+let composeFailures = 0
+
+window.fetch = async (url, init) => {
+  const body = init && init.body ? JSON.parse(init.body) : {}
+  calls.push({ url: String(url), mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : 'next'), draft: body.draft ?? '' })
+  if (String(url).includes('/composer-quill/history')) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        items: [
+          { text: '帮我把这段日志按时间排好，并标出错误行' },
+          { text: '帮我把这段日志整理一下，找出报错的那几行' },
+          { text: '完全无关的一句话' },
+        ],
+      }),
+    }
+  }
+  if (!String(url).includes('beacon') && body.mode === 'compose') {
+    if (composeMode === 'fail-once' && composeFailures === 0) {
+      composeFailures += 1
+      return { ok: false, status: 500, json: async () => ({ error: { message: 'model call failed' } }) }
+    }
+    const draft = String(body.draft)
+    const typo = draft.includes('曰')
+    const unchanged = composeMode === 'unchanged'
+    // New protocol: Case A streams only the tail; Case B starts with REWRITE:.
+    const reply = typo
+      ? 'REWRITE:\n帮我把这段日志整理一下，找出报错的那几行。'
+      : unchanged ? '' : '，找出报错的那几行。'
+    const encoder = new TextEncoder()
+    const frame = (event, data) => encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    const pieces = []
+    if (unchanged) {
+      pieces.push(frame('start', { mode: 'append' }))
+      pieces.push(frame('done', { reason: 'unchanged' }))
+    } else {
+      const isRewrite = reply.startsWith('REWRITE:')
+      pieces.push(frame('start', { mode: isRewrite ? 'full' : 'append' }))
+      const body3 = isRewrite ? reply.replace(/^REWRITE:\s*/, '') : reply
+      const step = Math.max(1, Math.ceil(body3.length / 3))
+      for (let i = 0; i < body3.length; i += step) pieces.push(frame('delta', { text: body3.slice(i, i + step) }))
+      pieces.push(frame('final', { text: isRewrite ? body3 : body3 }))
+      pieces.push(frame('done', { mode: isRewrite ? 'full' : 'append' }))
+    }
+    const stream = new ReadableStream({
+      async start(controller) {
+        for (const piece of pieces) {
+          controller.enqueue(piece)
+          await new Promise((resolve) => setTimeout(resolve, 220))
+        }
+        controller.close()
+      },
+    })
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8' } })
+  }
+  let payload = { ok: true }
+  if (!String(url).includes('beacon')) {
+    payload = { kind: 'next', candidates: ['继续看下去', '换个思路'] }
+  }
+  return { ok: true, status: 200, json: async () => payload }
+}
+window.__DSH_COMPOSER_QUILL_TOKEN__ = 'harness-token'
+
+const labels = {
+  'hint.accept': '按 Tab 采纳',
+  'hint.complete': '按 Tab 补全',
+  'hint.replace': '按 Tab 采用改写',
+  'hint.pending': '补写中…',
+  'hint.history': '按 Tab 补全（历史）',
+  'hint.position': '第 {index}/{total} 条，←/→ 切换',
+  'status.prefix': '建议：',
+  'settings.title': '续笔',
+  'settings.description': '…',
+}
+const t = (key) => labels[key] ?? key
+
+async function main() {
+  let captured = null
+  window.__ModuleLoader__ = { load(entry) { captured = entry } }
+
+  await import('../../client.js')
+
+  const mod = captured.factory((name) => (name === 'react' ? React : undefined))
+  const registered = []
+  const ctx = {
+    effect: (fn) => { const off = fn(); return typeof off === 'function' ? off : () => {} },
+    locale: { register: () => () => {} },
+    slots: {
+      inject: (name, factory) => { factory(); return () => {} },
+      register: (options, component) => { registered.push({ options, component }); return () => {} },
+    },
+  }
+  await mod.apply(ctx)
+
+  const dockEntry = registered.find((entry) => entry.options.name === 'conversation.input.dock')
+  const face = dockEntry.options.inject ? dockEntry.options.inject() : {}
+
+  const editor = document.querySelector('[data-composer-input]')
+  const root = createRoot(document.getElementById('dock'))
+
+  function render(draft, sessionId = 's-harness') {
+    root.render(React.createElement(dockEntry.component, {
+      session: { sessionId, running: false, blank: false },
+      input: { draft },
+      inputActions: {
+        insertText: (text) => {
+        window.__harnessInserted = text
+        const next = (editor.textContent || '') + text
+        editor.textContent = next
+        caretToEnd()
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }))
+        render(next)
+        return true
+      },
+        setDraft: (text) => { window.__harnessSetDraft = text; return true },
+        captureInsertion: () => ({ draftRev: 0 }),
+      },
+      t,
+      ...face,
+    }))
+  }
+
+  function type(text) {
+    editor.textContent = text
+    const range = document.createRange()
+    range.selectNodeContents(editor)
+    range.collapse(false)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }))
+    render(text)
+  }
+
+  /** Put the caret at the end of the editor. */
+  function caretToEnd() {
+    const range = document.createRange()
+    range.selectNodeContents(editor)
+    range.collapse(false)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+
+  /** One keystroke: DOM text, selection, input event, and the host re-render. */
+  function key(char, inputType = 'insertText') {
+    const before = editor.textContent ?? ''
+    const after = inputType === 'deleteContentBackward' ? before.slice(0, -1) : `${before}${char}`
+    editor.textContent = after
+    caretToEnd()
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType, data: char }))
+    render(after)
+    return after
+  }
+
+  /** Type like a person: one character at a time with a realistic delay. */
+  function typeLive(text, { delay = 90 } = {}) {
+    return new Promise((resolve) => {
+      const chars = [...text]
+      let index = 0
+      const step = () => {
+        if (index >= chars.length) {
+          resolve(editor.textContent ?? '')
+          return
+        }
+        key(chars[index])
+        index += 1
+        setTimeout(step, delay)
+      }
+      step()
+    })
+  }
+
+  function press(init) {
+    const target = editor
+    target.focus()
+    target.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init }))
+  }
+
+  const rec = {
+    samples: [],
+    timer: null,
+    start(interval = 50) {
+      this.samples = []
+      const tick = () => {
+        const dock = document.querySelector('[data-composer-quill="dock"]')
+        const proposal = document.querySelector('[data-composer-quill="dock-suggestion"]')
+        const pending = document.querySelector('[data-composer-quill="dock-pending"]')
+        const hint = document.querySelector('[data-composer-quill="dock-hint"]')
+        const ghost = document.querySelector('[data-composer-quill="text"]')
+        this.samples.push({
+          t: Math.round(performance.now()),
+          draft: editor.textContent ?? '',
+          dock: dock ? dock.textContent ?? '' : '',
+          // The row is always present now: sample the states, not its existence.
+          proposal: proposal ? proposal.textContent ?? '' : '',
+          pending: Boolean(pending),
+          hint: hint ? hint.textContent ?? '' : '',
+          chip: proposal ? proposal.textContent ?? '' : '',
+          ghost: ghost && getComputedStyle(ghost).display !== 'none' ? ghost.textContent ?? '' : '',
+        })
+      }
+      this.timer = setInterval(tick, interval)
+      tick()
+    },
+    stop() {
+      if (this.timer) clearInterval(this.timer)
+      this.timer = null
+      return this.samples
+    },
+  }
+
+  window.__harness = {
+    type,
+    render,
+    typeLive,
+    key,
+    press,
+    rec,
+    calls,
+    draft: () => editor.textContent ?? '',
+    store: () => (face && face.ghost ? face.ghost.getSnapshot() : null),
+    setSession(id) {
+      render(editor.textContent ?? '', id)
+    },
+    setComposeMode(mode) {
+      composeMode = mode
+      composeFailures = 0
+    },
+    accept(shift = false) {
+      editor.focus()
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: shift, bubbles: true, cancelable: true }))
+    },
+    clickChip() {
+      const chip = document.querySelector('[data-composer-quill="dock-suggestion"]')
+      if (chip) chip.click()
+      return Boolean(chip)
+    },
+    /** Presence + text of the inline ghost, sampled while a request is in flight. */
+    /** Vertical alignment of the ghost against the last character's line box. */
+    align() {
+      const editor = document.querySelector('[data-composer-input]')
+      const ghost = document.querySelector('[data-composer-quill="text"]')
+      if (!editor || !ghost) return null
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT)
+      let textNode = null
+      while (walker.nextNode()) {
+        if (walker.currentNode.length > 0) textNode = walker.currentNode
+      }
+      let charRect = null
+      if (textNode) {
+        const probe = document.createRange()
+        probe.setStart(textNode, textNode.length - 1)
+        probe.setEnd(textNode, textNode.length)
+        charRect = probe.getClientRects()[0] ?? null
+      }
+      const ghostStyle = getComputedStyle(ghost)
+      const lineHeight = Number.parseFloat(ghostStyle.lineHeight) || 0
+      const ghostRect = ghost.getBoundingClientRect()
+      const leading = charRect && lineHeight ? Math.max(0, (lineHeight - charRect.height) / 2) : 0
+      return {
+        ghostTop: Math.round(ghostRect.y),
+        charTop: charRect ? Math.round(charRect.y) : null,
+        leading: Math.round(leading * 10) / 10,
+        delta: charRect ? Math.round((ghostRect.y - (charRect.y - leading)) * 10) / 10 : null,
+      }
+    },
+    ghostNow() {
+      const text = document.querySelector('[data-composer-quill="text"]')
+      return text ? { text: text.textContent, display: getComputedStyle(text).display } : null
+    },
+    snapshot() {
+      const rect = (node) => {
+        if (node === null) return null
+        const r = node.getBoundingClientRect()
+        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
+      }
+      const text = document.querySelector('[data-composer-quill="text"]')
+      const chip = document.querySelector('[data-composer-quill="chip"]')
+      const dock = document.querySelector('[data-composer-quill="dock"]')
+      const sel = window.getSelection()
+      const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null
+      let caretProbe = null
+      if (range) {
+        const node = range.endContainer
+        const offset = range.endOffset
+        let probeRect = null
+        if (node.nodeType === 3 && offset > 0) {
+          const pr = document.createRange()
+          pr.setStart(node, offset - 1)
+          pr.setEnd(node, offset)
+          const rects = pr.getClientRects()
+          probeRect = rects.length ? rects[rects.length - 1] : null
+        } else if (node.nodeType === 1) {
+          const child = node.childNodes[Math.min(offset, node.childNodes.length) - 1]
+          if (child && child.nodeType === 3 && child.length > 0) {
+            const pr = document.createRange()
+            pr.setStart(child, child.length - 1)
+            pr.setEnd(child, child.length)
+            const rects = pr.getClientRects()
+            probeRect = rects.length ? rects[rects.length - 1] : null
+          }
+        }
+        caretProbe = {
+          nodeType: node.nodeType,
+          nodeName: node.nodeName,
+          offset,
+          childCount: node.childNodes.length,
+          collapsedRects: range.getClientRects().length,
+          probe: probeRect ? { left: Math.round(probeRect.left), right: Math.round(probeRect.right), top: Math.round(probeRect.top) } : null,
+        }
+      }
+      return {
+        caretProbe,
+        layers: document.querySelectorAll('[data-composer-quill="layer"]').length,
+        allTexts: [...document.querySelectorAll('[data-composer-quill="text"]')].map((node) => ({ text: node.textContent, display: getComputedStyle(node).display, rect: rect(node) })),
+        text: text ? { text: text.textContent, display: getComputedStyle(text).display, color: getComputedStyle(text).color, rect: rect(text) } : null,
+        chip: chip ? { text: chip.textContent, rect: rect(chip) } : null,
+        dock: dock ? { text: dock.textContent, rect: rect(dock) } : null,
+        proposal: (() => {
+          const node = document.querySelector('[data-composer-quill="dock-suggestion"]')
+          return node ? { text: node.textContent, rect: rect(node) } : null
+        })(),
+        pendingChip: Boolean(document.querySelector('[data-composer-quill="dock-pending"]')),
+        hint: (() => {
+          const node = document.querySelector('[data-composer-quill="dock-hint"]')
+          return node ? { text: node.textContent, rect: rect(node) } : null
+        })(),
+        inserted: window.__harnessInserted ?? null,
+        calls: calls.map((call) => call.mode),
+      }
+    },  }
+  render('')
+  window.__harnessReady = true
+}
+
+main().catch((error) => {
+  window.__harnessError = String((error && error.stack) || error)
+  console.error(error)
+})
+

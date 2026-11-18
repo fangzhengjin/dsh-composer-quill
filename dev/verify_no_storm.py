@@ -1,0 +1,100 @@
+"""Real check: one request per settled draft, and a suggestion actually lands."""
+
+import json
+import sys
+import time
+from pathlib import Path
+from playwright.sync_api import sync_playwright
+
+URL = sys.argv[1] if len(sys.argv) > 1 else ""
+CHROME = r"%USERPROFILE%\AppData\Local\ms-playwright\chromium-1148\chrome-win\chrome.exe"
+LOGS = [
+    Path(r"%USERPROFILE%\.dsh\profiles\ghosttest\composer-quill.log"),
+    Path(r"%USERPROFILE%\.dsh\composer-quill.log"),
+]
+
+
+def tail_events(since_len):
+    events = []
+    for path in LOGS:
+        if not path.exists():
+            continue
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        for line in lines[since_len:]:
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return events
+
+
+def log_size():
+    total = 0
+    for path in LOGS:
+        if path.exists():
+            total += len(path.read_text(encoding="utf-8", errors="ignore").splitlines())
+    return total
+
+
+def main() -> int:
+    if not URL:
+        return 2
+    start = log_size()
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, executable_path=CHROME)
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, device_scale_factor=1)
+        page.goto(URL, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_selector("[data-composer-input]", timeout=45000)
+        page.wait_for_timeout(1600)
+        for label in ("继续", "Continue", "知道了"):
+            button = page.locator(f"button:has-text('{label}')")
+            if button.count() > 0:
+                button.first.click()
+                page.wait_for_timeout(400)
+                break
+
+        page.evaluate(
+            """() => {
+                const editor = document.querySelector('[data-composer-input]');
+                editor.focus();
+                const range = document.createRange();
+                range.selectNodeContents(editor);
+                range.collapse(false);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }"""
+        )
+        for ch in "帮我把这段日志":
+            page.keyboard.insert_text(ch)
+            page.wait_for_timeout(60)
+
+        # Sit still for a while: this is where the old build kept cancelling.
+        deadline = time.time() + 12
+        chip = ""
+        while time.time() < deadline:
+            chip = page.evaluate(
+                "() => (document.querySelector('[data-composer-quill=\"dock-suggestion\"]') || {}).textContent || ''"
+            )
+            if chip:
+                break
+            page.wait_for_timeout(200)
+        page.wait_for_timeout(2500)
+
+        events = tail_events(start)
+        requests = [e for e in events if e.get("event") == "request"]
+        cancelled = [e for e in events if e.get("event") == "cancelled"]
+        print(f"请求数: {len(requests)}（草稿长度 {[e.get('draftChars') for e in requests]}）")
+        print(f"被取消: {len(cancelled)}")
+        print(f"建议: {chip[:44]!r}")
+        ok = bool(chip) and len(cancelled) == 0 and len(requests) <= 2
+        print("PASS 一次请求即出建议，无取消风暴" if ok else "FAIL 仍有取消风暴或无建议")
+        page.screenshot(path="storm-fixed.png")
+        page.keyboard.press("Control+a")
+        page.keyboard.press("Backspace")
+        browser.close()
+        return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

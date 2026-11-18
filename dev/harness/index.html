@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>composer-quill harness</title>
+<style>
+  :root { --dsw-alias-label-tertiary:#8a8f98; --dsw-alias-border-l2:#d0d4da; --dsw-alias-bg-overlay:#fff; --dsw-alias-label-primary:#1b1f24; --dsw-alias-label-secondary:#5b6270; }
+  body { margin:0; background:#f6f7f9; font:14px/22px system-ui,-apple-system,"Segoe UI",sans-serif; }
+  #shell { max-width:760px; margin:48px auto; }
+  #dock { min-height:26px; }
+  .card { background:#fff; border:1px solid var(--dsw-alias-border-l2); border-radius:14px; padding:10px 12px; }
+  .scroll { overflow:auto; }
+  .grow { position:relative; display:flex; align-items:flex-start; gap:8px; }
+  .editor { flex:1; min-height:48px; outline:none; white-space:pre-wrap; word-break:break-word; }
+  .placeholder { position:absolute; left:0; top:0; color:#9aa0a6; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="shell">
+  <div id="dock"></div>
+  <div class="card">
+    <div class="scroll">
+      <div class="grow">
+        <div class="editor" contenteditable="true" data-composer-input aria-label="composer"></div>
+        <div class="placeholder" data-composer-placeholder>随便说点什么…</div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="bundle.js"></script>
+</body>
+</html>

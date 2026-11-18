@@ -12,16 +12,19 @@ dsh-composer-quill/
 ├── package.json        dsh.bundle.patch / dsh.client 声明、engines 门禁
 ├── locale/{zh,en}.json 插件市场的标题与描述（UI 文案在 client.js 内联）
 ├── docs/               架构、协议、本文件
+├── dev/                开发工具（不随包发布）
+│   ├── harness/        浏览器模拟器（假 DSH + 假 fetch）
+│   └── verify_*.py     真机验证脚本（Playwright）
 ├── smoke-test.mjs      不依赖宿主的单元/集成测试（Node 直接跑）
 └── icon.svg
 ```
 
-工作区里还有一整套验证工具（不在包内）：
+验证工具在 `dev/` 下（不随包发布，详见 [dev/README.md](../dev/README.md)）：
 
 ```
-_harness/            模拟器（浏览器里的假 DSH：src.js → esbuild → bundle.js）
-verify_daily.py      22 个行为场景（模拟器驱动）
-verify_*.py          真机脚本：空行锚点、逐词、设置页、刷新复用、流式重绘……
+dev/harness/         模拟器：src.js → esbuild → bundle.js（用 file:// 打开）
+dev/verify_daily.py  22 个行为场景（模拟器驱动）
+dev/verify_*.py      真机脚本：空行锚点、设置页、刷新复用、流式重绘……
 ```
 
 ## 2. 安装与运行
@@ -56,17 +59,17 @@ Get-Content "$env:USERPROFILE\.dsh\composer-quill.log" -Tail 20 | Select-String 
 
 约 40 条断言，`ALL CHECKS PASSED` 是唯一通过标志。
 
-### 3.2 模拟器（`python verify_daily.py`）
+### 3.2 模拟器（`python dev/verify_daily.py`）
 
-`_harness/` 在浏览器里模拟 DSH 的 composer（Lexical 风格的 `<p><span>` 结构 + 假 fetch）。改 `src.js` 后必须重建：
+`dev/harness/` 在浏览器里模拟 DSH 的 composer（Lexical 风格的 `<p><span>` 结构 + 假 fetch）。改 `src.js` 后必须重建：
 
 ```powershell
-cd _harness; npx esbuild src.js --bundle --format=iife --target=chrome120 --outfile=bundle.js
+cd dev/harness; node node_modules/esbuild/bin/esbuild src.js --bundle --format=iife --target=chrome120 --outfile=bundle.js
 ```
 
 22 个场景（S1–S19）覆盖：逐字输入、快速连打、Esc 抑制、失败重试、长草稿、切会话、超短草稿、空行锚点、历史补全、逐词/整条采纳、清空重弹、行常驻、覆盖区间零调用、流式增长。
 
-### 3.3 真机脚本（`python verify_*.py <url>`）
+### 3.3 真机脚本（`python dev/verify_*.py <url>`）
 
 每个脚本自带断言与截图，按需跑：
 

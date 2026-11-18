@@ -4,6 +4,12 @@
 
 ## 0.14.x
 
+### 0.14.3
+- 仓库结构：浏览器模拟器（`_harness/`）与真机脚本（`verify_*.py`）移入 `dev/`，随插件一起入库
+- 模拟器改为引用 `../../client.js`，构建产物与 `node_modules` 不入库（见 `dev/README.md`）
+- `.gitignore` 补充：`dev/harness/bundle.js`、截图与本地输出
+- 无行为变更
+
 ### 0.14.2
 - 技术文档：`docs/ARCHITECTURE.md`、`docs/PROTOCOL.md`、`docs/DEVELOPMENT.md`，`DETAIL.md` 改为索引
 - 流被截断（没有 `done`/`error` 帧）按失败处理，不再把半截建议留在屏幕上
