@@ -56,6 +56,7 @@ const NEXT_RULES = [
   'Return exactly 3 candidates when the transcript supports them (never fewer than 2 unless the conversation is empty), most likely first. Each candidate is one line in the user\'s voice, at most 100 characters, with no quotes, numbering, markdown, or trailing explanation.',
   'The three must differ in approach or in what they ask for, not in wording.',
   'Continue the open goal and react to the latest assistant reply. Use the language of the latest user message, even when the reply is written in another language.',
+  'The transcript is chronological and the last two turns dominate: the candidate must follow the topic being discussed right now. Earlier rows are background only — never revive a topic the conversation has moved past.',
   'When the assistant asked a question, answer it only if the conversation already supports the answer; otherwise ask for the missing detail.',
   'Never invent user preferences, credentials, facts, or consent to publish, delete, buy, or send anything.',
   'Return {"candidates":[]} when the transcript holds no usable content.',
@@ -100,6 +101,7 @@ const COMPOSE_RULES = [
   'When the prompt names a required language, the answer must be written in it, even if the draft or the transcript use another one. Translating the draft is allowed; switching back is not.',
   'Never describe the draft, the task or your reasoning. Output only the text the user would type next.',
   'The suggestion must belong to this conversation: reuse the concrete subject named in the transcript or the digest (a file, a bug, a decision) instead of generic filler.',
+  'The transcript is chronological and the last two turns dominate: the suggestion must continue the topic being discussed right now. Earlier rows are background only — never revive a topic the conversation has moved past.',
 ].join('\n')
 
 /** Append one JSONL diagnostic line next to the profile. Best-effort only. */
@@ -265,27 +267,35 @@ function transcriptOf(events, options = {}) {
     size += serialized.length + 1
   }
   if (picked.length === 0) return ''
-  // With a focus, hold two slots for relevance instead of filling every slot with
-  // the newest rows: otherwise the backfill never has room to run.
-  const newestLimit = focus.trim() === '' ? maxRows : Math.max(2, maxRows - 2)
+  // With a focus, hold one slot for an earlier row — not two. Two slots were enough
+  // to drag the suggestion back onto a topic the conversation had left behind.
+  const backfillSlots = focus.trim() === '' ? 0 : Math.max(0, Math.min(1, Number(options.backfill ?? 1)))
+  const newestLimit = Math.max(2, maxRows - backfillSlots)
   const trimmed = picked.slice(0, newestLimit).reverse()
-  if (focus.trim() !== '' && trimmed.length < maxRows) {
+  if (backfillSlots > 0 && trimmed.length < maxRows) {
     const chosen = new Set(trimmed.map((row) => row.text))
+    const total = list.length
     const candidates = []
-    for (const event of list) {
+    for (let index = 0; index < total; index += 1) {
+      const event = list[index]
       if (event?.type !== 'user/message' && event?.type !== 'assistant/message') continue
       const text = event.type === 'user/message'
         ? textOfBlocks(event.data?.content ?? event.data?.message?.content)
         : textOfBlocks(event.data?.message?.content ?? event.data?.content)
       if (text.trim() === '' || chosen.has(text)) continue
-      const score = overlapScore(text, focus)
-      if (score <= 0) continue
+      // Recency is a multiplier, not a tie-breaker: an old row has to be markedly
+      // more on-topic before it earns its place. Without this an old topic wins on
+      // a single shared keyword and the suggestion answers the wrong thread.
+      const age = total <= 1 ? 0 : (total - 1 - index) / (total - 1)
+      const recency = 1 - 0.7 * age
+      const score = overlapScore(text, focus) * recency
+      if (score < 0.12) continue
       candidates.push({ text, score, role: event.type === 'user/message' ? 'user' : 'assistant' })
     }
     candidates.sort((left, right) => right.score - left.score)
     let size = JSON.stringify(trimmed).length
     for (const candidate of candidates) {
-      if (trimmed.length >= maxRows) break
+      if (trimmed.length >= maxRows - 0) break
       if (size + candidate.text.length + 40 > maxChars) continue
       chosen.add(candidate.text)
       trimmed.push(row(candidate.role, candidate.text))
@@ -313,9 +323,11 @@ function sessionDigest(events) {
     const points = Array.from(text)
     return points.length <= limit ? text : `${points.slice(0, limit).join('')}…`
   }
+  // Field order carries the weight: the newest messages first, the opening request
+  // last, so a model that skims the JSON still starts from the current topic.
   return {
-    thesis: shortenTo(users[0], 160),
-    recentUserMessages: users.slice(-3).map((text) => shortenTo(text, 100)),
+    latestUserMessages: users.slice(-3).map((text) => shortenTo(text, 100)),
+    openingRequest: shortenTo(users[0], 160),
   }
 }
 

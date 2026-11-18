@@ -300,6 +300,28 @@ check('candidates are ranked by fit, not by model order', () => {
   assert.notEqual(ranked[0], '好的，我来看看这个问题的具体情况吧。', JSON.stringify(ranked))
 })
 
+check('a stale topic cannot outrank the current one', () => {
+  const { transcriptOf } = host.__test
+  const events = []
+  // Turns 1-6: an old topic that uses the same generic word twice.
+  for (let turn = 1; turn <= 6; turn += 1) {
+    events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第${turn}轮：给点建议吧，上次那个建议我还没用` }] } })
+    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第${turn}轮回答：建议可以先从最小改动开始。` }] } } })
+  }
+  // Turns 7-30: the current topic, same generic word once.
+  for (let turn = 7; turn <= 30; turn += 1) {
+    events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第${turn}轮：继续改 composer-quill 的缓存键与回合计数` }] } })
+    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第${turn}轮回答：回合计数进键即可让旧结果失效。` }] } } })
+  }
+  const context = transcriptOf(events, { rows: 10, chars: 3200, focus: '再给点建议' })
+  const rows = JSON.parse(context)
+  const old = rows.filter((row) => /第[1-6]轮/.test(row.text))
+  const newest = rows.slice(-2).map((row) => row.text).join(' ')
+  assert.equal(rows.length, 10, 'the window stays full: ' + rows.length)
+  assert.ok(old.length <= 1, 'old topic rows in the window: ' + old.length)
+  assert.ok(/第29轮|第30轮/.test(newest), 'the newest turns must be present: ' + newest.slice(0, 60))
+})
+
 check('a long session keeps the topic the draft is about', () => {
   const { transcriptOf, sessionDigest } = host.__test
   const events = []
@@ -319,8 +341,8 @@ check('a long session keeps the topic the draft is about', () => {
   assert.ok(focused.length <= 3400, `window grew too much: ${focused.length}`)
 
   const digest = sessionDigest(events)
-  assert.ok(digest.thesis.includes('CSV'), JSON.stringify(digest))
-  assert.equal(digest.recentUserMessages.length, 3)
+  assert.ok(digest.openingRequest.includes('CSV'), JSON.stringify(digest))
+  assert.equal(digest.latestUserMessages.length, 3)
 })
 
 check('the diagnostic log rotates once it grows', () => {
@@ -984,7 +1006,7 @@ check('the short-draft prompt names the chosen language and the conversation', (
   const prompt = buildShortDraftPrompt({
     draft: '再',
     context: JSON.stringify([{ role: 'assistant', text: '语言设置只影响空输入时的建议。' }]),
-    digest: { thesis: '把插件的语言设置拆开', recentUserMessages: ['补写跟随草稿'] },
+    digest: { latestUserMessages: ['补写跟随草稿'], openingRequest: '把插件的语言设置拆开' },
     assistant: '语言设置只影响空输入时的建议，补写跟随已有文本。',
     style: { count: 6, avgChars: 20, language: 'zh', usesGreeting: false },
     language: 'zh',
