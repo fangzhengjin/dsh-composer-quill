@@ -996,6 +996,27 @@ check('the short-draft prompt names the chosen language and the conversation', (
   assert.ok(prompt.includes('Chinese'), 'language missing')
 })
 
+check('the turn counter is the decidable part of "identical"', () => {
+  const { epochOf, bumpEpoch, syncEpoch, saveSuggestion, loadSuggestion } = moduleExports.__test
+  window.localStorage.removeItem('dsh.composer-quill.epoch')
+  window.localStorage.removeItem('dsh.composer-quill.suggestions')
+
+  const session = 's-epoch-test'
+  assert.equal(epochOf(session), 0, 'a fresh session starts at zero')
+  assert.equal(bumpEpoch(session), 1)
+  assert.equal(bumpEpoch(session), 2)
+  assert.equal(epochOf(session), 2, 'the counter is persisted, not just in memory')
+  // A reload forgets the in-memory value but not the stored one.
+  syncEpoch('another-session')
+  assert.equal(syncEpoch(session), 2, 'switching back adopts the stored value')
+
+  // A stored suggestion is bound to the counter it was produced in.
+  saveSuggestion(session, 'next', '', ['先把这三个问题逐条回答'], '9')
+  assert.deepEqual(loadSuggestion(session, 'next', '', '9'), ['先把这三个问题逐条回答'])
+  bumpEpoch(session)
+  assert.equal(loadSuggestion(session, 'next', '', '9'), null, 'a finished turn invalidates the stored suggestion')
+})
+
 check('acceptance feedback reorders candidates, never invents them', () => {
   const { featuresOf, rankByLearning, recordOutcome, learningSummary } = moduleExports.__test
   window.localStorage.clear()

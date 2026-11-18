@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.25.0'
+    const BUILD = '0.26.0'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -130,7 +130,7 @@ const COVERED_DEBOUNCE_MS = 1200
           ...payload,
           locale: browserLocale(),
           language: currentConfig().language,
-          epoch: turnEpoch.current,
+          epoch: syncEpoch(payload.sessionId),
         }),
         signal,
         credentials: 'same-origin',
@@ -548,7 +548,7 @@ const COVERED_DEBOUNCE_MS = 1200
     function saveSuggestion(sessionId, kind, draft, items, version = '') {
       if (sessionId === null || !Array.isArray(items) || items.length === 0) return
       const map = readSuggestions()
-      map[suggestionKey(sessionId, kind, draft, turnEpoch.current)] = { items, at: Date.now(), version: String(version ?? '') }
+      map[suggestionKey(sessionId, kind, draft, syncEpoch(sessionId))] = { items, at: Date.now(), version: String(version ?? '') }
       const keys = Object.keys(map)
       if (keys.length > SUGGEST_MAX) {
         keys
@@ -561,7 +561,7 @@ const COVERED_DEBOUNCE_MS = 1200
 
     function loadSuggestion(sessionId, kind, draft, version = null) {
       if (sessionId === null) return null
-      const entry = readSuggestions()[suggestionKey(sessionId, kind, draft, turnEpoch.current)]
+      const entry = readSuggestions()[suggestionKey(sessionId, kind, draft, syncEpoch(sessionId))]
       if (entry === null || typeof entry !== 'object' || !Array.isArray(entry.items)) return null
       if (Date.now() - Number(entry.at ?? 0) > SUGGEST_TTL_MS) return null
       // A suggestion computed for an older transcript is exactly the "this has
@@ -640,8 +640,52 @@ const COVERED_DEBOUNCE_MS = 1200
       }
     }
 
-    /** Incremented on every finished turn: nothing computed before it may be reused. */
-    const turnEpoch = { current: 0 }
+    /**
+     * The number of turns the conversation has seen. It is the decidable part of
+     * "exactly the same situation": a stored result may only be reused while this
+     * number is unchanged, so it is persisted per Session and only ever grows.
+     */
+    const EPOCH_KEY = 'dsh.composer-quill.epoch'
+    const turnEpoch = { sessionId: null, current: 0 }
+
+    function readEpochMap() {
+      try {
+        const raw = window.localStorage.getItem(EPOCH_KEY)
+        const parsed = raw === null || raw === '' ? {} : JSON.parse(raw)
+        return parsed !== null && typeof parsed === 'object' ? parsed : {}
+      } catch {
+        return {}
+      }
+    }
+
+    function epochOf(sessionId) {
+      if (sessionId === null || sessionId === undefined) return 0
+      const value = Number(readEpochMap()[sessionId] ?? 0)
+      return Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
+    }
+
+    function bumpEpoch(sessionId) {
+      if (sessionId === null || sessionId === undefined) return 0
+      const map = readEpochMap()
+      const next = epochOf(sessionId) + 1
+      map[sessionId] = next
+      try {
+        window.localStorage.setItem(EPOCH_KEY, JSON.stringify(map))
+      } catch {
+        // Storage unavailable: the in-memory value still invalidates this session.
+      }
+      turnEpoch.sessionId = sessionId
+      turnEpoch.current = next
+      return next
+    }
+
+    /** Adopt the stored counter when the Session changes. */
+    function syncEpoch(sessionId) {
+      if (turnEpoch.sessionId === sessionId) return turnEpoch.current
+      turnEpoch.sessionId = sessionId
+      turnEpoch.current = epochOf(sessionId)
+      return turnEpoch.current
+    }
 
     let learnMemo = { raw: null, data: {} }
 
@@ -1486,7 +1530,7 @@ const COVERED_DEBOUNCE_MS = 1200
           return
         }
         if (prior.running && !running) {
-          turnEpoch.current += 1
+          bumpEpoch(sessionId)
           // A finished turn adds messages this Session's history did not have.
           setHistoryEpoch((value) => value + 1)
           // New turn, new transcript: stored suggestions for it are stale.
@@ -2167,9 +2211,10 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, transcriptVersion } }
+    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
 
 
 
