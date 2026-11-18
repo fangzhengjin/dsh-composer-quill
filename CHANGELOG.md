@@ -4,6 +4,13 @@
 
 ## 0.31.x
 
+### 0.31.3
+README 面向公开读者补齐：
+- 顶部加一张实拍截图（`docs/assets/composer.png`）：输入框内的灰字 + 上方建议行
+- 安装改为一行 `dsh plugin --profile desktop add github:yugyq/dsh-composer-quill`，本地目录的写法作为备选
+- 把 DSH 版本要求提到安装章节开头（原先藏在「已知限制」）
+- `.gitignore` 放开 `docs/assets/*.png`，其余截图仍然忽略
+
 ### 0.31.2
 账号改名跟进：`yugyq` → `yugyq`。
 - `package.json` 的 `repository` / `homepage` / `bugs` 指向新地址

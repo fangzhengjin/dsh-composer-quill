@@ -2,6 +2,8 @@
 
 **DSH 输入框里的续笔。** 回合结束时预测你下一句要说什么；打字时把你的半句话补完，顺手改掉错字和标点。建议是灰色文字贴在光标后面，**按 Tab 才采用，永远不会自动发送**。
 
+![输入框上方的建议与输入框内的灰字](docs/assets/composer.png)
+
 它是 DeepSeek Harness（DSH）的一个插件，跑在本地，通过宿主已配置好的模型路由请求补全。
 
 ## 三种建议
@@ -24,6 +26,15 @@
 - **中文输入法正常。** 组字期间不会打断你，也不会把组字内容当成草稿。
 
 ## 安装
+
+需要 DSH `>=0.2.1-rc.2 <0.3.0`（不匹配的宿主会在安装阶段被拦下）。
+
+```bash
+# 直接从仓库装（不需要先 clone）
+dsh plugin --profile desktop add github:yugyq/dsh-composer-quill
+```
+
+已经在本地开发的话，也可以指向目录：
 
 ```bash
 dsh plugin --profile desktop add /path/to/dsh-composer-quill

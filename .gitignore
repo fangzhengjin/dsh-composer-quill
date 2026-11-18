@@ -29,4 +29,7 @@ _*.mjs
 __pycache__/
 *.pyc
 
+# README 截图（故意保留）
+!docs/assets/
+!docs/assets/*.png
 
