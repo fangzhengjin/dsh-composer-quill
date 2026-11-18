@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.19.1'
+    const BUILD = '0.20.0'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -126,7 +126,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const response = await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ ...payload, locale: browserLocale(), language: currentConfig().language }),
+        body: JSON.stringify({ ...payload, locale: browserLocale(), language: payload.draft === '' ? currentConfig().language : 'auto' }),
         signal,
         credentials: 'same-origin',
       })
@@ -202,7 +202,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const response = await fetch(path, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ ...payload, locale: browserLocale(), language: currentConfig().language }),
+        body: JSON.stringify({ ...payload, locale: browserLocale(), language: payload.draft === '' ? currentConfig().language : 'auto' }),
         signal,
         credentials: 'same-origin',
       })
@@ -518,14 +518,25 @@ const COVERED_DEBOUNCE_MS = 1200
       }
     }
 
+    /**
+     * A suggestion is only reusable while the conversation it was computed from is
+     * unchanged: a message count plus the last sequence number is enough.
+     */
+    function transcriptVersion(events) {
+      if (!Array.isArray(events) || events.length === 0) return '0'
+      const last = events[events.length - 1]
+      const seq = Number(last?.seq ?? events.length)
+      return `${events.length}:${Number.isFinite(seq) ? seq : ''}`
+    }
+
     function suggestionKey(sessionId, kind, draft) {
       return `${sessionId ?? ''}|${kind}|${draft ?? ''}`
     }
 
-    function saveSuggestion(sessionId, kind, draft, items) {
+    function saveSuggestion(sessionId, kind, draft, items, version = '') {
       if (sessionId === null || !Array.isArray(items) || items.length === 0) return
       const map = readSuggestions()
-      map[suggestionKey(sessionId, kind, draft)] = { items, at: Date.now() }
+      map[suggestionKey(sessionId, kind, draft)] = { items, at: Date.now(), version: String(version ?? '') }
       const keys = Object.keys(map)
       if (keys.length > SUGGEST_MAX) {
         keys
@@ -536,11 +547,14 @@ const COVERED_DEBOUNCE_MS = 1200
       writeSuggestions(map)
     }
 
-    function loadSuggestion(sessionId, kind, draft) {
+    function loadSuggestion(sessionId, kind, draft, version = null) {
       if (sessionId === null) return null
       const entry = readSuggestions()[suggestionKey(sessionId, kind, draft)]
       if (entry === null || typeof entry !== 'object' || !Array.isArray(entry.items)) return null
       if (Date.now() - Number(entry.at ?? 0) > SUGGEST_TTL_MS) return null
+      // A suggestion computed for an older transcript is exactly the "this has
+      // nothing to do with the conversation" complaint: refuse it.
+      if (version !== null && String(entry.version ?? '') !== String(version)) return null
       return entry.items.filter((item) => typeof item === 'string' && item !== '')
     }
 
@@ -1109,7 +1123,7 @@ const COVERED_DEBOUNCE_MS = 1200
         if (!enabled || sessionId === null) return false
         const marker = `${kind}|${forDraft}`
         if (hydratedFor.current === marker) return false
-        const items = loadSuggestion(sessionId, kind, forDraft)
+        const items = loadSuggestion(sessionId, kind, forDraft, `${history.items.length}`)
         if (items === null || items.length === 0) return false
         // A single stored suggestion is not worth skipping the request for: the
         // user would lose the "第 1/N 条" choices.
@@ -1139,6 +1153,8 @@ const COVERED_DEBOUNCE_MS = 1200
       if (layer.current === null) layer.current = createGhostLayer()
       const ghostLayer = layer.current
       const [history, setHistory] = React.useState({ sessionId: null, items: [] })
+      const historyRef = React.useRef(history)
+      historyRef.current = history
       // Bumped when a turn finishes, so the history matrix picks up new messages.
       const [historyEpoch, setHistoryEpoch] = React.useState(0)
 
@@ -1355,7 +1371,7 @@ const COVERED_DEBOUNCE_MS = 1200
                 // only the JSON fallback would ever be reused.
                 const settled = ghost.getSnapshot()
                 if (settled.kind === 'compose' && settled.items.length > 0) {
-                  saveSuggestion(settled.sessionId, 'compose', settled.forDraft, settled.items)
+                  saveSuggestion(settled.sessionId, 'compose', settled.forDraft, settled.items, `${historyRef.current.items.length}`)
                 }
               },
               error: (data) => {
@@ -1366,7 +1382,7 @@ const COVERED_DEBOUNCE_MS = 1200
               json: (body) => {
                 const items = rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
                 ghost.settle(live.sessionId, active, 'compose', draftNow, items)
-                saveSuggestion(live.sessionId, 'compose', draftNow, items)
+                saveSuggestion(live.sessionId, 'compose', draftNow, items, `${historyRef.current.items.length}`)
               },
             }).catch((error) => {
               if (active.signal.aborted) return
@@ -1406,7 +1422,7 @@ const COVERED_DEBOUNCE_MS = 1200
                 ? (Array.isArray(body?.candidates) ? body.candidates : [])
                 : rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
               ghost.settle(live.sessionId, active, kind, draftNow, items)
-              saveSuggestion(live.sessionId, kind, draftNow, items)
+              saveSuggestion(live.sessionId, kind, draftNow, items, `${historyRef.current.items.length}`)
             }, (error) => {
               if (active.signal.aborted) return
               if (error?.status === 409) {
@@ -2121,9 +2137,10 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale } }
+    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, transcriptVersion } }
   },
 })
+
 
 
 

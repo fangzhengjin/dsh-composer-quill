@@ -228,6 +228,19 @@ check('a two-character draft never gets a fragment tail', () => {
   assert.equal(rewrite?.mode, 'full')
 })
 
+check('a next-message with no link to the conversation is dropped', () => {
+  const { groundedness, MIN_GROUNDEDNESS } = host.__test
+  const context = JSON.stringify([
+    { role: 'user', text: '帮我把 dsh-composer-quill 插件的语言设置拆开' },
+    { role: 'assistant', text: '语言设置只影响空输入时的下一句建议，补写跟随已有文本。' },
+  ])
+  // On-topic: shares wording with the transcript.
+  assert.ok(groundedness('补写要跟随前面的文本，不要被设置影响', context) >= MIN_GROUNDEDNESS)
+  assert.ok(groundedness('语言设置那部分改完了吗', context) >= MIN_GROUNDEDNESS)
+  // Off-topic: nothing in common.
+  assert.ok(groundedness('明天上海天气怎么样，要不要带伞', context) < MIN_GROUNDEDNESS)
+})
+
 check('the language setting overrides every heuristic', () => {
   const { resolveLanguage, rankCandidates, wrongLanguage } = host.__test
 
@@ -996,6 +1009,17 @@ check('a proposal already typed into the editor is stale', () => {
   assert.equal(proposalIsStale('里的报错信息提取出来', '帮我把这段日志'), false)
   assert.equal(proposalIsStale('看一下', ''), false)
   assert.equal(proposalIsStale('', '看一下'), false)
+})
+
+check('a stored suggestion from an older transcript is refused', () => {
+  const { saveSuggestion, loadSuggestion, transcriptVersion } = moduleExports.__test
+  window.localStorage.clear()
+  saveSuggestion('s1', 'next', '', ['先把语言设置那段改完'], '3:120')
+  assert.deepEqual(loadSuggestion('s1', 'next', '', '3:120'), ['先把语言设置那段改完'])
+  // One more turn happened: the stored text is no longer about this conversation.
+  assert.equal(loadSuggestion('s1', 'next', '', '5:180'), null)
+  // The version is derived from the event list.
+  assert.equal(transcriptVersion([{ type: 'user/message', seq: 4 }]), '1:4')
 })
 
 check('acceptance feedback reorders candidates, never invents them', () => {
