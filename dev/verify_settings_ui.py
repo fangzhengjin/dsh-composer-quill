@@ -7,20 +7,6 @@ from playwright.sync_api import sync_playwright
 URL = sys.argv[1] if len(sys.argv) > 1 else ""
 CHROME = r"%USERPROFILE%\AppData\Local\ms-playwright\chromium-1148\chrome-win\chrome.exe"
 
-CANDIDATES = """
-() => {
-  const nodes = [...document.querySelectorAll('button, [role="button"], a, [role="menuitem"]')];
-  return nodes.map((n, i) => ({
-    i,
-    tag: n.tagName,
-    text: (n.textContent || '').trim().slice(0, 24),
-    aria: n.getAttribute('aria-label') || '',
-    title: n.getAttribute('title') || '',
-    testid: n.getAttribute('data-testid') || '',
-  })).filter((n) => n.text || n.aria || n.title || n.testid).slice(0, 60);
-}
-"""
-
 
 def main() -> int:
     if not URL:
@@ -30,61 +16,58 @@ def main() -> int:
         page = browser.new_page(viewport={"width": 1280, "height": 900}, device_scale_factor=1)
         page.goto(URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_selector("[data-composer-input]", timeout=45000)
-        page.wait_for_timeout(1800)
+        page.wait_for_timeout(1500)
         for label in ("继续", "Continue", "知道了"):
             button = page.locator(f"button:has-text('{label}')")
             if button.count() > 0:
                 button.first.click()
-                page.wait_for_timeout(500)
+                page.wait_for_timeout(400)
                 break
 
-        print("=== 可点元素（前 40） ===")
-        for item in page.evaluate(CANDIDATES)[:40]:
-            print(" ", json.dumps(item, ensure_ascii=False))
-
-        # Settings lives behind the "更多" (More) entry in this shell.
-        opened = False
-        more = page.locator("[aria-label='更多'], button:has-text('更多')")
-        if more.count() > 0:
-            more.first.click()
-            page.wait_for_timeout(900)
-            print("=== 更多菜单 ===")
-            for item in page.evaluate(CANDIDATES):
-                if item["aria"] or item["text"]:
-                    print(" ", json.dumps(item, ensure_ascii=False))
-            for selector in (
-                "[role='menuitem']:has-text('设置')",
-                "button:has-text('设置')",
-                "text=设置",
-            ):
-                locator = page.locator(selector)
-                if locator.count() > 0:
-                    locator.first.click()
-                    page.wait_for_timeout(1400)
-                    opened = True
-                    print("opened via", selector)
-                    break
-
+        # The app's own shortcut is far more stable than clicking an avatar.
+        page.keyboard.press("Control+Alt+Comma")
+        page.wait_for_timeout(1200)
+        opened = page.evaluate("() => document.body.innerText.includes('设置')")
         if not opened:
-            # Keyboard shortcut used by many shells.
-            page.keyboard.press("Control+Comma")
-            page.wait_for_timeout(1200)
+            height = page.viewport_size["height"] if page.viewport_size else 900
+            page.mouse.click(29, height - 30)
+            page.wait_for_timeout(800)
+            entry = page.locator("text=设置")
+            if entry.count() > 0:
+                entry.first.click()
+                page.wait_for_timeout(1200)
 
-        page.wait_for_timeout(800)
-        print("=== 设置界面标题 ===")
-        print(page.evaluate("() => document.body.innerText.slice(0, 400)"))
+        general = page.locator("text=通用设置")
+        if general.count() > 0:
+            general.first.click()
+            page.wait_for_timeout(1000)
 
         row = page.locator("[data-composer-quill='settings-row']")
         print("plugin row count:", row.count())
-        if row.count() > 0:
-            box = row.first.bounding_box()
-            text = row.first.inner_text()
-            print("row text:", text.replace("\n", " | ")[:200])
-            print("row box:", box)
-            row.first.screenshot(path="settings-row.png")
-            page.screenshot(path="settings-full.png")
+        if row.count() == 0:
+            print("FAIL 设置里没有找到插件行")
+            browser.close()
+            return 1
+
+        print("row text:", row.first.inner_text().replace("\n", " | ")[:160])
+        print("row box:", row.first.bounding_box())
+        row.first.screenshot(path="settings-row.png")
+        page.screenshot(path="settings-general.png")
+
+        # The controls must actually write the configuration.
+        page.select_option("[data-composer-quill='settings-mode']", "manual")
+        page.wait_for_timeout(400)
+        stored = page.evaluate("() => localStorage.getItem('dsh.composer-quill.config')")
+        current = page.evaluate("() => document.querySelector('[data-composer-quill=\"settings-mode\"]').value")
+        print("stored:", stored)
+        print("mode value:", current)
+        page.select_option("[data-composer-quill='settings-mode']", "auto")
+        page.wait_for_timeout(200)
+
+        ok = current == "manual" and stored is not None and '"mode":"manual"' in stored
+        print("PASS 设置行渲染且写入配置" if ok else "FAIL 设置行或持久化异常")
         browser.close()
-    return 0
+        return 0 if ok else 1
 
 
 if __name__ == "__main__":
