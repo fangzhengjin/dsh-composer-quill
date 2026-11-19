@@ -560,6 +560,48 @@ def main() -> int:
         )
         h("typeLive('', {delay: 0})")
 
+        # ---- S28 换行后的灰字回到行首
+        reset("")
+        h("setComposeMode('long')")
+        h("typeLive('试一下灰字显示得怎么样，多写点字', {delay: 35})")
+        page.wait_for_timeout(2000)
+        lines_info = page.evaluate(
+            """() => {
+                const ghost = document.querySelector('[data-composer-quill="text"]');
+                const editor = document.querySelector('[data-composer-input]');
+                if (!ghost || !editor) return null;
+                const node = ghost.lastChild;
+                const text = node ? node.nodeValue || '' : '';
+                if (text === '') return null;
+                const range = document.createRange();
+                const starts = [];
+                let previousTop = null;
+                for (let i = 0; i < text.length; i += 1) {
+                    range.setStart(node, i);
+                    range.setEnd(node, i + 1);
+                    const rect = range.getBoundingClientRect();
+                    if (previousTop === null || Math.abs(rect.top - previousTop) > 2) {
+                        starts.push(Math.round(rect.left));
+                        previousTop = rect.top;
+                    }
+                }
+                return {
+                    starts,
+                    editorLeft: Math.round(editor.getBoundingClientRect().left),
+                    ghostLeft: Math.round(ghost.getBoundingClientRect().left),
+                };
+            }"""
+        )
+        record(
+            "S28 换行后回到行首",
+            bool(lines_info)
+            and len(lines_info["starts"]) >= 2
+            and lines_info["starts"][0] > lines_info["editorLeft"] + 20
+            and all(abs(start - lines_info["editorLeft"]) <= 2 for start in lines_info["starts"][1:]),
+            f"{lines_info}",
+        )
+        h("setComposeMode('ok')")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()

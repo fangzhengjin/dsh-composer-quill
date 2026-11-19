@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.17-dev'
+    const BUILD = '0.31.18-dev'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -984,6 +984,9 @@ const COVERED_DEBOUNCE_MS = 1200
     function createGhostLayer() {
       let host = null
       let textEl = null
+      let textNode = null
+      // Floats on the first line only: wrapped lines then start at the content edge.
+      let spacerEl = null
       // 编辑框自己的 min-height，提案撑高之前先存下来。
       let savedMinHeight = null
       // Parent we made positioned, so its own style can be put back.
@@ -1044,7 +1047,7 @@ const COVERED_DEBOUNCE_MS = 1200
        */
       const fitToHeight = (limit) => {
         if (textEl === null || !(limit > 0)) return
-        const full = textEl.textContent ?? ''
+        const full = textNode === null ? '' : textNode.nodeValue ?? ''
         if (full === '' || textEl.scrollHeight <= limit + 1) return
         // 灰字是浮层，不会撑高输入框：先借最多两行的高度，让它像正文一样换行。
         // 宿主可能已经设了内联 min-height，所以和当前值比较，而不是要求它为空。
@@ -1063,11 +1066,11 @@ const COVERED_DEBOUNCE_MS = 1200
         let high = chars.length
         while (low < high) {
           const mid = Math.ceil((low + high) / 2)
-          textEl.textContent = `${chars.slice(0, mid).join('')}…`
+          if (textNode !== null) textNode.nodeValue = `${chars.slice(0, mid).join('')}…`
           if (textEl.scrollHeight <= limit + 1) low = mid
           else high = mid - 1
         }
-        textEl.textContent = `${chars.slice(0, Math.max(1, low)).join('')}…`
+        if (textNode !== null) textNode.nodeValue = `${chars.slice(0, Math.max(1, low)).join('')}…`
       }
 
       /** The host's own origin: caret coordinates are viewport-relative. */
@@ -1151,15 +1154,21 @@ const COVERED_DEBOUNCE_MS = 1200
         const glyphHeight = rect.height || lineHeight
         const leading = Math.max(0, Math.round((lineHeight - glyphHeight) / 2))
         const origin = hostOrigin()
-        place(
-          rect.left - origin.left,
-          rect.top - leading - origin.top,
-          null,
-          Math.max(120, contentRight - rect.left),
-          'start',
-          contentBottom - (rect.top - leading),
-        fitToHeight(contentBottom - (rect.top - leading))
-        )
+        const lineTop = rect.top - leading - origin.top
+        const indentWidth = Math.max(0, rect.left - contentLeft)
+        const blockWidth = Math.max(120, contentRight - contentLeft)
+        // A full-width block starting at the content edge, with the caret offset carried
+        // by a one-line float: wrapped lines fall back to the left edge instead of keeping
+        // the caret's indent.
+        // 可用高度必须在同一个坐标空间里算：lineTop 相对 host，contentBottom 是视口。
+        const limit = contentBottom - (rect.top - leading)
+        place(contentLeft - origin.left, lineTop, blockWidth, null, 'left', limit)
+        if (spacerEl !== null) {
+          const line = Number.parseFloat(style.lineHeight) || rect.height || 24
+          spacerEl.style.width = `${Math.round(indentWidth)}px`
+          spacerEl.style.height = `${Math.round(line)}px`
+        }
+        fitToHeight(limit)
         copyFont(style)
         return true
       }
@@ -1197,6 +1206,12 @@ const COVERED_DEBOUNCE_MS = 1200
         host.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;z-index:0;pointer-events:none;'
         textEl = document.createElement('div')
         textEl.setAttribute('data-composer-quill', 'text')
+        spacerEl = document.createElement('i')
+        spacerEl.setAttribute('data-composer-quill', 'spacer')
+        spacerEl.style.cssText = 'float:left;width:0;height:0;pointer-events:none;'
+        textNode = document.createTextNode('')
+        textEl.appendChild(spacerEl)
+        textEl.appendChild(textNode)
         textEl.style.cssText = [
           'position:absolute',
           'white-space:pre-wrap',
@@ -1272,7 +1287,7 @@ const COVERED_DEBOUNCE_MS = 1200
           clear()
           if (!mount()) return
         }
-        if (textEl.textContent !== text) textEl.textContent = text
+        if (textNode !== null && textNode.nodeValue !== text) textNode.nodeValue = text
         textEl.style.display = ''
         hidePlaceholder()
         if (anchor === 'caret' && layoutCaret()) return
@@ -2438,6 +2453,8 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
+
 
 
 
