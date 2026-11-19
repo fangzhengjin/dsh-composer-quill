@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.16-dev'
+    const BUILD = '0.31.17-dev'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -1047,10 +1047,12 @@ const COVERED_DEBOUNCE_MS = 1200
         const full = textEl.textContent ?? ''
         if (full === '' || textEl.scrollHeight <= limit + 1) return
         // 灰字是浮层，不会撑高输入框：先借最多两行的高度，让它像正文一样换行。
-        if (target !== null && savedMinHeight === null && target.style.minHeight === '') {
+        // 宿主可能已经设了内联 min-height，所以和当前值比较，而不是要求它为空。
+        if (target !== null && savedMinHeight === null) {
           const line = Number.parseFloat(getComputedStyle(textEl).lineHeight) || 24
           const want = Math.min(textEl.scrollHeight, limit + line * 2)
-          if (want > limit + 2) {
+          const current = Number.parseFloat(target.style.minHeight) || 0
+          if (want > current + 2) {
             savedMinHeight = target.style.minHeight
             target.style.minHeight = `${Math.round(want)}px`
             return
@@ -1240,6 +1242,8 @@ const COVERED_DEBOUNCE_MS = 1200
             return { left: Math.round(box.left), right: Math.round(box.right), top: Math.round(box.top), bottom: Math.round(box.bottom) }
             })(),
           maxHeight: style === null ? null : style.maxHeight,
+          minHeight: (() => { const editor = editorEl(); return editor === null ? null : editor.style.minHeight || '(none)' })(),
+          ghostHeight: textEl === null ? null : textEl.scrollHeight,
           overflow: style === null ? null : style.overflow,
           color: style === null ? null : style.color,
           opacity: style === null ? null : style.opacity,
@@ -2434,6 +2438,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
 
 
 
