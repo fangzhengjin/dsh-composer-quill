@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.15-dev'
+    const BUILD = '0.31.16-dev'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -986,6 +986,8 @@ const COVERED_DEBOUNCE_MS = 1200
       let textEl = null
       // 编辑框自己的 min-height，提案撑高之前先存下来。
       let savedMinHeight = null
+      // Parent we made positioned, so its own style can be put back.
+      let positionedParent = null
       let target = null
       let placeholderEl = null
       let placeholderDisplay = ''
@@ -1023,8 +1025,9 @@ const COVERED_DEBOUNCE_MS = 1200
 
       const place = (left, top, width, maxWidth, align, maxHeight = null) => {
         Object.assign(textEl.style, {
-          left: `${Math.round(left)}px`,
-          top: `${Math.round(top)}px`,
+          // Sub-pixel precision: the origin is fractional, so rounding adds up.
+            left: `${Math.round(left * 10) / 10}px`,
+          top: `${Math.round(top * 10) / 10}px`,
           width: width === null ? 'auto' : `${Math.round(width)}px`,
           maxWidth: maxWidth === null ? 'none' : `${Math.round(maxWidth)}px`,
           // A fixed layer is not clipped by the editor: without a height limit a long
@@ -1065,6 +1068,11 @@ const COVERED_DEBOUNCE_MS = 1200
         textEl.textContent = `${chars.slice(0, Math.max(1, low)).join('')}…`
       }
 
+      /** The host's own origin: caret coordinates are viewport-relative. */
+      const hostOrigin = () => {
+        const rect = host === null ? null : host.getBoundingClientRect()
+        return rect === null ? { left: 0, top: 0 } : { left: rect.left, top: rect.top }
+      }
       const layoutBox = () => {
         if (target === null || target === undefined) return false
         const style = getComputedStyle(target)
@@ -1073,9 +1081,10 @@ const COVERED_DEBOUNCE_MS = 1200
         const px = (value) => Number.parseFloat(value) || 0
         const left = Math.max(rect.left + px(style.borderLeftWidth) + px(style.paddingLeft), clip.left)
         const top = Math.max(rect.top + px(style.borderTopWidth) + px(style.paddingTop), clip.top)
+        const origin = hostOrigin()
         place(
-          left,
-          top,
+          left - origin.left,
+          top - origin.top,
           Math.max(0, Math.min(rect.width - px(style.paddingLeft) - px(style.paddingRight), clip.right - left)),
           null,
           style.textAlign,
@@ -1138,10 +1147,11 @@ const COVERED_DEBOUNCE_MS = 1200
         // not split evenly (fonts carry more space below).
         const lineHeight = px(style.lineHeight) || rect.height
         const glyphHeight = rect.height || lineHeight
-        const leading = Math.max(0, Math.round((lineHeight - glyphHeight) / 3))
+        const leading = Math.max(0, Math.round((lineHeight - glyphHeight) / 2))
+        const origin = hostOrigin()
         place(
-          rect.left,
-          rect.top - leading,
+          rect.left - origin.left,
+          rect.top - leading - origin.top,
           null,
           Math.max(120, contentRight - rect.left),
           'start',
@@ -1153,6 +1163,10 @@ const COVERED_DEBOUNCE_MS = 1200
       }
 
       const clear = () => {
+        if (positionedParent !== null) {
+          positionedParent.style.position = ''
+          positionedParent = null
+        }
         if (target !== null && savedMinHeight !== null) {
           target.style.minHeight = savedMinHeight
           savedMinHeight = null
@@ -1176,11 +1190,13 @@ const COVERED_DEBOUNCE_MS = 1200
         host = document.createElement('div')
         host.setAttribute('data-composer-quill', 'layer')
         host.setAttribute('aria-hidden', 'true')
-        host.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;z-index:2147483000;pointer-events:none;'
+        // Inside the composer, not on <body>: the composer clips it, dialogs cover it,
+        // and the tail wraps inside the same box the text does.
+        host.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible;z-index:0;pointer-events:none;'
         textEl = document.createElement('div')
         textEl.setAttribute('data-composer-quill', 'text')
         textEl.style.cssText = [
-          'position:fixed',
+          'position:absolute',
           'white-space:pre-wrap',
           'word-break:break-word',
           'overflow-wrap:anywhere',
@@ -1192,7 +1208,13 @@ const COVERED_DEBOUNCE_MS = 1200
           'display:none',
         ].join(';')
         host.appendChild(textEl)
-        document.body.appendChild(host)
+        const parent = editor.parentElement
+        const parentStyle = parent === null ? null : getComputedStyle(parent)
+        if (parent !== null && parentStyle !== null && parentStyle.position === 'static') {
+          parent.style.position = 'relative'
+          positionedParent = parent
+        }
+        ;(parent ?? document.body).appendChild(host)
         return true
       }
 
@@ -2412,6 +2434,9 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
+
+
 
 
 
