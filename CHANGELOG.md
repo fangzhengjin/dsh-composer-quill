@@ -4,6 +4,18 @@
 
 ## 0.31.x
 
+### 0.31.5
+公开前的最后准备：
+- README 写清前置条件：**先在 DSH 里配好模型**，插件只借用现有路由
+- 加一句「第三方插件，与官方无隶属关系」和 issue 入口
+- 新增 GitHub Actions（`.github/workflows/test.yml`）：push / PR 时在 Node 20 与 22 上跑 `node smoke-test.mjs`
+- 补回 0.31.4 漏记的条目
+- 无行为变更
+
+### 0.31.4
+- `dev/verify_rename_loaded.py` 不再写死本机 Chrome 路径，改用与其余脚本相同的运行时解析
+- 项目改名为 `dsh-composer-quill`（续笔）、换新图标、README 补截图，均记录在 0.31.0–0.31.3
+
 ### 0.31.3
 README 面向公开读者补齐：
 - 顶部加一张实拍截图（`docs/assets/composer.png`）：输入框内的灰字 + 上方建议行
