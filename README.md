@@ -98,8 +98,10 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill   # 或直接�
 两套测试都不需要真实的 DSH 环境：
 
 ```bash
-node smoke-test.mjs               # 57 项离线单测：解析、鉴权、缓存、流式帧序、语种闸
-cd dev && python verify_daily.py  # 24 个浏览器场景（自带模拟器）
+npm test                          # 67 项离线单测：解析、鉴权、缓存、流式帧序、语言闸、输入清洗
+npm run test:ui                   # 24 个浏览器场景（自带模拟器）
+npm test -- --filter=transcript   # 只跑某个行为
+npm test -- --list                # 列出全部用例名
 ```
 
 真机脚本、审计探针和模拟器都在 `dev/`，用法见 [开发与验证](docs/DEVELOPMENT.md)。
@@ -119,3 +121,4 @@ cd dev && python verify_daily.py  # 24 个浏览器场景（自带模拟器）
 ## 许可证
 
 [MIT](LICENSE)
+

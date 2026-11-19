@@ -61,5 +61,11 @@
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "test": "node smoke-test.mjs",
+    "test:ui": "python dev/verify_daily.py",
+    "test:all": "node smoke-test.mjs && python dev/verify_daily.py",
+    "test:log": "node dev/summarize-log.mjs 1"
   }
 }

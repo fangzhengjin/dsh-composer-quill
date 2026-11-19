@@ -67,18 +67,31 @@ Get-Content "$env:USERPROFILE\.dsh\composer-quill.log" -Tail 20 | Select-String 
 
 ## 3. 三层测试
 
-### 3.1 单测（`node smoke-test.mjs`）
+三个入口都在 `package.json` 里，不用记路径：
 
-不依赖 DSH，直接用假的 `ctx` / 假 `res` 驱动真实代码。覆盖：
+```bash
+npm test                          # 单测
+npm test -- --filter=cache        # 只跑名字匹配的用例
+npm test -- --list                # 列出全部用例名（分组打印）
+npm run test:ui                   # 浏览器模拟器
+npm run test:all                  # 两个都跑
+npm run test:log -- 1             # 汇总最近 1 小时的诊断日志
+```
 
-- 解析器：`parseCandidates` / `parseComposed` / `parseComposeReply` / `parseSentence` / `joinSentence` / `shorten`
-- 会话数据：`transcriptOf`（含 emoji 不爆、保留最新用户消息）、`historyOf`、`maskSecrets`
-- 路由：鉴权矩阵、SSE 帧时序、缓存命中、单飞（数字/流式各一条）、日志轮转
-- 客户端纯函数：`followRemainder`、`bestHistoryMatch`、`normalizeConfig`、建议持久化、`hydrate`
+### 3.1 单测（`npm test`）
 
-约 40 条断言，`ALL CHECKS PASSED` 是唯一通过标志。
+不依赖 DSH，直接用假的 `ctx` / 假 `res` 驱动真实代码。67 条用例分四组：
 
-### 3.2 模拟器（`python dev/verify_daily.py`）
+- **host: pure helpers** — 解析器、`transcriptOf`、`sessionDigest`、语言闸、输入清洗、缓存开关
+- **host: routes and streaming** — 鉴权矩阵、SSE 帧时序、缓存命中、单飞、日志轮转
+- **client: factory, slots, requests** — 工厂与两个 slot、`followRemainder`、建议持久化、回合计数
+- **client: audit findings** — 采纳反馈重排、切会话复用、abort 监听器泄漏等审计结论
+
+每行结尾带耗时，失败会在最后汇总点名；`ALL CHECKS PASSED` 是唯一通过标志。
+
+`__test` 导出的 47 个内部函数全部至少被引用一次（29 个 host + 18 个 client），改内部实现时不必猜哪条用例在守它。
+
+### 3.2 模拟器（`npm run test:ui`）
 
 `dev/harness/` 在浏览器里模拟 DSH 的 composer（Lexical 风格的 `<p><span>` 结构 + 假 fetch）。改 `src.js` 后必须重建：
 

@@ -14,16 +14,74 @@ import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
-let failures = 0
+// --- runner -----------------------------------------------------------------
+// Zero dependencies on purpose: the suite has to run from a bare checkout, and
+// in CI, with nothing but Node. --filter / --list exist because iterating on one
+// behaviour should not mean reading sixty lines to find the failure.
+const argv = process.argv.slice(2)
+const filterArg = argv.find((arg) => arg.startsWith('--filter='))
+const filter = filterArg === undefined ? null : new RegExp(filterArg.slice('--filter='.length), 'i')
+const listOnly = argv.includes('--list')
+
+let passed = 0
+let failed = 0
+let skipped = 0
+let groupName = ''
+const slow = []
+const failures = [] // kept for the historical exit-code logic at the bottom
+
+const matches = (name) => filter === null || filter.test(name)
+
+const record = (name, ok, detail, ms) => {
+  if (!groupPrinted) {
+    groupPrinted = true
+    console.log(`\n${groupName}`)
+  }
+  if (ok) {
+    passed += 1
+    console.log(`  ok   ${name}  (${ms.toFixed(1)}ms)`)
+  } else {
+    failed += 1
+    failures.push(name)
+    console.log(`  FAIL ${name}: ${detail}`)
+  }
+  slow.push({ name, ms })
+}
+
+let groupPrinted = false
+const group = (name) => {
+  groupName = name
+  groupPrinted = false
+}
+
 const check = (name, fn) => {
-  try { fn(); console.log(`  ok   ${name}`) } catch (error) { failures += 1; console.log(`  FAIL ${name}: ${error.message}`) }
+  if (listOnly) { console.log(`${groupName} :: ${name}`); return }
+  if (!matches(name)) { skipped += 1; return }
+  const started = performance.now()
+  try {
+    fn()
+    record(name, true, '', performance.now() - started)
+  } catch (error) {
+    record(name, false, error.message, performance.now() - started)
+  }
 }
+
 const checkAsync = async (name, fn) => {
-  try { await fn(); console.log(`  ok   ${name}`) } catch (error) { failures += 1; console.log(`  FAIL ${name}: ${error.message}`) }
+  if (listOnly) { console.log(`${groupName} :: ${name}`); return }
+  if (!matches(name)) { skipped += 1; return }
+  const started = performance.now()
+  try {
+    await fn()
+    record(name, true, '', performance.now() - started)
+  } catch (error) {
+    record(name, false, error.message, performance.now() - started)
+  }
 }
+
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // ---------------------------------------------------------------- Host half
+group('host: pure helpers')
 const host = await import(pathToFileURL('./index.js').href)
 
 check('host exports name/inject/apply', () => {
@@ -94,6 +152,101 @@ check('parseComposeReply splits Case A tails from Case B rewrites', () => {
 })
 
 // ------------------------------------------------- Host route, fake model
+group('host: routes and streaming')
+
+check('input hygiene normalises what came out of a terminal', () => {
+  const { cleanLine, isPunctuationOnly, scriptOf, latinShareOf } = host.__test
+  // cleanLine collapses whitespace, strips a list marker and surrounding quotes.
+  assert.equal(cleanLine('  帮我把这段   日志\n\n整理一下  '), '帮我把这段 日志 整理一下')
+  assert.equal(cleanLine('- 看看这个报错'), '看看这个报错')
+  assert.equal(cleanLine('2) "继续补写"'), '继续补写')
+  // An empty line yields null, not an empty string: callers test for null.
+  assert.equal(cleanLine('   '), null)
+  assert.equal(cleanLine(null), null)
+  // Punctuation-only lines carry no request.
+  assert.equal(isPunctuationOnly('。。。'), true)
+  assert.equal(isPunctuationOnly('……！'), true)
+  assert.equal(isPunctuationOnly('   '), true)
+  assert.equal(isPunctuationOnly('继续'), false)
+  // scriptOf returns a coarse label, latinShareOf a ratio.
+  assert.equal(scriptOf('帮我把这段日志整理一下'), 'zh')
+  assert.equal(scriptOf('please tidy this log'), 'en')
+  // Latin outweighs CJK here, so this reads as English: the label is coarse on purpose.
+  assert.equal(scriptOf('帮我看 dsh-composer-quill 的报错'), 'en')
+  assert.equal(scriptOf('帮我把 abc'), 'mixed')
+  assert.equal(scriptOf(''), 'none')
+  assert.equal(latinShareOf('全部是中文'), 0)
+  assert.equal(latinShareOf('only english here'), 1)
+  const mixed = latinShareOf('dsh-composer-quill 的缓存键')
+  assert.ok(mixed > 0 && mixed < 1, String(mixed))
+})
+
+check('the on-disk cache is inert in tests and knows where it lives', () => {
+  const { cacheFile, loadCache } = host.__test
+  // DSH_COMPOSER_QUILL_NO_CACHE=1 is set by this suite: loadCache returns 0 entries,
+  // so a test run can never hand a stale answer to the next one.
+  assert.equal(loadCache(), 0)
+  assert.ok(cacheFile().endsWith('composer-quill-cache.json'), cacheFile())
+  assert.ok(cacheFile().includes('.dsh'), cacheFile())
+})
+
+
+check('the language gate only fires on a clear mismatch', () => {
+  const { wrongLanguage } = host.__test
+  // A Chinese user pasting a Latin identifier must not be judged English.
+  assert.equal(wrongLanguage('帮我看看 dsh-composer-quill 的缓存', 'zh'), false)
+  assert.equal(wrongLanguage('the draft is already complete, nothing to add', 'zh'), true)
+  // English setting, Chinese candidate: clearly the wrong language.
+  assert.equal(wrongLanguage('这里应该继续补写', 'en'), true)
+  assert.equal(wrongLanguage('continue with the cache key', 'en'), false)
+  // Short text carries no language signal either way.
+  assert.equal(wrongLanguage('ok', 'zh'), false)
+  assert.equal(wrongLanguage('继续', 'en'), false)
+  // No opinion means no gate.
+  assert.equal(wrongLanguage('anything at all here', ''), false)
+})
+
+check('the language setting outranks the locale', () => {
+  const { resolveLanguage } = host.__test
+  assert.equal(resolveLanguage({ locale: 'en-US', forced: 'zh' }), 'zh')
+  assert.equal(resolveLanguage({ locale: 'zh-CN', forced: 'en' }), 'en')
+  assert.equal(resolveLanguage({ locale: 'zh-CN', forced: 'auto' }), 'zh')
+  assert.equal(resolveLanguage({ locale: 'en-GB' }), 'en')
+  assert.equal(resolveLanguage({ locale: 'fr-FR' }), '')
+})
+
+check('eventsOf picks the longest event list the session exposes', () => {
+  const { eventsOf } = host.__test
+  const snapshot = [{ seq: 1, type: 'user/message' }, { seq: 2, type: 'assistant/message' }]
+  const own = [{ seq: 3, type: 'user/message' }]
+  // The snapshot is longer, so it wins: mixing sources would duplicate rows.
+  assert.deepEqual(eventsOf({ snapshotEvents: () => snapshot, ownEvents: () => own }), snapshot)
+  assert.deepEqual(eventsOf({ snapshotEvents: () => own, ownEvents: () => snapshot }), snapshot)
+  // A throwing accessor must not hide the others.
+  assert.deepEqual(
+    eventsOf({ snapshotEvents: () => { throw new Error('nope') }, ownEvents: () => own }),
+    own,
+  )
+  // A session that exposes nothing yields an empty list, never undefined.
+  assert.deepEqual(eventsOf(null), [])
+  assert.deepEqual(eventsOf({}), [])
+})
+
+check('a one-character draft is asked for a full short sentence', () => {
+  const { buildShortDraftPrompt } = host.__test
+  const prompt = buildShortDraftPrompt({
+    draft: '帮',
+    context: '[]',
+    digest: null,
+    assistant: '',
+    style: null,
+    language: 'zh',
+  })
+  assert.ok(prompt.includes('"帮"'), 'the draft must be quoted into the prompt')
+  assert.ok(/3 to 20/.test(prompt), 'the answer length must be spelled out')
+  assert.ok(prompt.includes('Chinese'), 'the language setting must reach the prompt')
+  assert.ok(/not generic filler/.test(prompt), 'the filler ban is what stops "帮我。"')
+})
 {
   const draft = '帮我看看这个报错是怎么回事。'
   let call = 0
@@ -388,6 +541,8 @@ check('authorized accepts the token or a browser that sent the preflight header'
 })
 
 // -------------------------------------------------------------- Client half
+group('client: factory, slots, requests')
+
 const registered = []
 const disposers = []
 let effectQueue = []
@@ -993,6 +1148,46 @@ check('a request in flight keeps covering a draft that only grew', () => {
   assert.equal(inFlightCovers('帮我把这段', null), false)
 })
 
+check('the turn counter is per session and survives a session switch', () => {
+  const { epochOf, bumpEpoch, syncEpoch } = moduleExports.__test
+  window.localStorage.clear()
+  assert.equal(epochOf('session-a'), 0)
+  assert.equal(bumpEpoch('session-a'), 1)
+  assert.equal(bumpEpoch('session-a'), 2)
+  // Another session keeps its own count.
+  assert.equal(epochOf('session-b'), 0)
+  assert.equal(epochOf('session-a'), 2)
+  // Switching away and back adopts the stored value instead of resetting it.
+  assert.equal(syncEpoch('session-b'), 0)
+  assert.equal(syncEpoch('session-a'), 2)
+  assert.equal(syncEpoch('session-a'), 2, 'a repeat call must not re-read or reset')
+  // The count continues from the stored value after a switch.
+  assert.equal(bumpEpoch('session-a'), 3)
+  window.localStorage.clear()
+})
+
+check('the transcript stamp changes only when the tail does', () => {
+  const { transcriptVersion } = moduleExports.__test
+  const first = transcriptVersion([{ seq: 1 }, { seq: 2 }])
+  assert.equal(transcriptVersion([{ seq: 1 }, { seq: 2 }]), first)
+  assert.notEqual(transcriptVersion([{ seq: 1 }, { seq: 3 }]), first)
+  assert.notEqual(transcriptVersion([{ seq: 1 }, { seq: 2 }, { seq: 3 }]), first)
+  assert.equal(transcriptVersion([]), '0')
+})
+check('stored suggestions can be listed and cleared per session', () => {
+  const { saveSuggestion, readSuggestions, clearSessionSuggestions } = moduleExports.__test
+  window.localStorage.clear()
+  saveSuggestion('session-x', 'compose', '帮我把这段', ['日志整理一下'], '1', 'append')
+  saveSuggestion('session-y', 'next', '', ['继续'], '1', 'full')
+  const all = readSuggestions()
+  assert.ok(Object.keys(all).length >= 2, JSON.stringify(all))
+  clearSessionSuggestions('session-x')
+  const after = readSuggestions()
+  const keysAfter = JSON.stringify(after)
+  assert.equal(keysAfter.includes('session-x'), false, 'session-x entries must be gone')
+  window.localStorage.clear()
+})
+
 check('the turn counter, not the message count, decides reuse', () => {
   const { saveSuggestion, loadSuggestion, bumpEpoch, syncEpoch } = moduleExports.__test
   window.localStorage.clear()
@@ -1124,6 +1319,7 @@ check('streaming frames arrive in order and end with done', async () => {
 })
 
 // ------------------------------------------------- independent audit findings
+group('client: audit findings')
 // A long stream used to add one abort listener per chunk (83 on 80 chunks).
 {
   let peak = 0
@@ -1354,6 +1550,23 @@ check('streaming frames arrive in order and end with done', async () => {
 
 for (const off of disposers) off()
 
-console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)
-process.exit(failures === 0 ? 0 : 1)
+if (listOnly) process.exit(0)
+
+const elapsed = slow.reduce((total, entry) => total + entry.ms, 0)
+const worst = [...slow].sort((left, right) => right.ms - left.ms).slice(0, 3)
+const summary = [
+  '',
+  `${passed} passed`,
+  failed === 0 ? '' : `${failed} failed`,
+  skipped === 0 ? '' : `${skipped} skipped (--filter)`,
+  `${elapsed.toFixed(0)}ms total`,
+].filter(Boolean).join(', ')
+console.log(summary)
+if (failed > 0) {
+  console.log('slowest: ' + worst.map((entry) => `${entry.name} (${entry.ms.toFixed(0)}ms)`).join(' · '))
+  for (const name of failures) console.log('  failed: ' + name)
+}
+console.log(failed === 0 ? 'ALL CHECKS PASSED' : `${failed} CHECK(S) FAILED`)
+process.exit(failed === 0 ? 0 : 1)
+
 

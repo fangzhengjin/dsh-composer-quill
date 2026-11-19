@@ -22,4 +22,5 @@ jobs:
       # The suite runs without DSH and without a browser: host helpers, the client
       # factory, route auth and the streaming frame order are all stubbed.
       - name: Unit tests
-        run: node smoke-test.mjs
+        run: npm test
+
