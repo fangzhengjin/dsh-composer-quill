@@ -1046,38 +1046,65 @@ const COVERED_DEBOUNCE_MS = 1200
         copyFont(style)
       }
 
+      /**
+       * The box the ghost may paint inside: the nearest ancestor that really clips
+       * (overflow) or draws the composer card. The editor itself is not a limit —
+       * it grows taller than the visible card and scrolls.
+       */
+      const clipBox = () => {
+        const targetRect = target.getBoundingClientRect()
+        let node = target.parentElement
+        for (let depth = 0; node !== null && depth < 8; depth += 1) {
+          const style = getComputedStyle(node)
+          const clips = style.overflowX !== 'visible' || style.overflowY !== 'visible'
+          const radius = Number.parseFloat(style.borderRadius) || 0
+          if (clips || radius >= 8) {
+            const rect = node.getBoundingClientRect()
+            const px = (value) => Number.parseFloat(value) || 0
+            return {
+              left: rect.left + px(style.borderLeftWidth) + px(style.paddingLeft),
+              right: rect.right - px(style.borderRightWidth) - px(style.paddingRight),
+              top: rect.top + px(style.borderTopWidth) + px(style.paddingTop),
+              bottom: rect.bottom - px(style.borderBottomWidth) - px(style.paddingBottom),
+            }
+          }
+          node = node.parentElement
+        }
+        return { left: targetRect.left, right: targetRect.right, top: targetRect.top, bottom: targetRect.bottom }
+      }
+
       const layoutCaret = () => {
         const style = getComputedStyle(target)
         const px = (value) => Number.parseFloat(value) || 0
         const box = target.getBoundingClientRect()
-        const contentLeft = box.left + px(style.borderLeftWidth) + px(style.paddingLeft)
-        // The ghost must stay inside the composer's content box: a fixed layer is
-        // not clipped by the editor, so a viewport-wide limit would draw outside.
-        const contentRight = box.right - px(style.borderRightWidth) - px(style.paddingRight)
-      const contentBottom = box.bottom - px(style.borderBottomWidth) - px(style.paddingBottom)
+        const clip = clipBox()
+        // A fixed layer is not clipped by the editor, so every limit comes from the
+        // visible composer box instead of the editor's own (taller) box.
+        const contentLeft = Math.max(box.left + px(style.borderLeftWidth) + px(style.paddingLeft), clip.left)
+        const contentRight = Math.min(box.right - px(style.borderRightWidth) - px(style.paddingRight), clip.right)
+        const contentBottom = Math.min(box.bottom - px(style.borderBottomWidth) - px(style.paddingBottom), clip.bottom)
         let rect = caretRect()
-        // A collapsed-range rect at the line start is a measurement failure, not
-        // a caret at the start: fall back to the last character's right edge —
-        // unless the caret really does start a line (empty line after a <br>).
+        // A collapsed-range rect at the line start is a measurement failure, not a caret
+        // at the start: fall back to the last character's right edge — unless the caret
+        // really does start a line (empty line after a <br>).
         if (rect === null || (rect.fromBlock !== true && rect.left <= contentLeft + 2)) {
           const edge = edgeOfText(lastTextNodeOf(target))
           if (edge !== null) rect = edge
         }
         if (rect === null) return false
-        // A character rect is the font box, not the line box, and the extra
-        // leading is not split evenly (fonts carry more space below): pixels
-        // measured 2px above the glyph for a 14px font in a 24px line.
+        // A character rect is the font box, not the line box, and the extra leading is
+        // not split evenly (fonts carry more space below).
         const lineHeight = px(style.lineHeight) || rect.height
         const glyphHeight = rect.height || lineHeight
         const leading = Math.max(0, Math.round((lineHeight - glyphHeight) / 3))
         place(
-        rect.left,
-        rect.top - leading,
-        null,
-        Math.max(120, contentRight - rect.left),
-        'start',
-        contentBottom - (rect.top - leading),
-      )
+          rect.left,
+          rect.top - leading,
+          null,
+          Math.max(120, contentRight - rect.left),
+          'start',
+          contentBottom - (rect.top - leading),
+        )
         copyFont(style)
         return true
       }
@@ -1882,7 +1909,26 @@ const COVERED_DEBOUNCE_MS = 1200
           ghostLayer.clear()
           return undefined
         }
+      const overlayBlocking = () => {
+        // The layer is fixed with a high z-index: without this it painted grey text
+        // over dialogs opened from the sidebar. A dialog that contains the composer
+        // itself (some hosts nest it) must not count.
+        const editor = editorEl()
+        const dialogs = typeof document.querySelectorAll === 'function'
+    ? document.querySelectorAll('[aria-modal="true"], [role="dialog"], [role="alertdialog"]')
+    : []
+        for (const node of dialogs) {
+          if (editor !== null && node.contains(editor)) continue
+          const rect = node.getBoundingClientRect()
+          if (rect.width > 0 && rect.height > 0) return true
+        }
+        return false
+      }
         const paint = () => {
+          if (overlayBlocking()) {
+            ghostLayer.clear()
+            return
+          }
           const data = paintData.current
           let anchor = 'none'
           if (data.nextActive) {
@@ -1907,6 +1953,12 @@ const COVERED_DEBOUNCE_MS = 1200
           }
         }
         paint()
+      const onFocusChange = () => {
+        if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(paint)
+        else paint()
+      }
+      document.addEventListener('focusin', onFocusChange, true)
+      document.addEventListener('focusout', onFocusChange, true)
         if (typeof ResizeObserver !== 'function' || typeof MutationObserver !== 'function') return undefined
         let frame = null
         const schedulePaint = () => {
@@ -1939,6 +1991,8 @@ const COVERED_DEBOUNCE_MS = 1200
           window.removeEventListener('resize', schedulePaint)
           window.removeEventListener('scroll', schedulePaint, true)
           document.removeEventListener('selectionchange', schedulePaint)
+          document.removeEventListener('focusin', onFocusChange, true)
+          document.removeEventListener('focusout', onFocusChange, true)
           if (frame !== null) window.cancelAnimationFrame(frame)
         }
       }, [visible, ghost, ghostLayer])
@@ -2305,6 +2359,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
 
 
 

@@ -517,6 +517,48 @@ def main() -> int:
         )
         h("setComposeMode('ok')")
 
+        # ---- S27 打开对话框后灰字必须消失
+        # 灰字层是 fixed + 极高 z-index：打开设置这类对话框时它会画在对话框上面。
+        ghost_len = """() => {
+            const node = document.querySelector('[data-composer-quill="text"]');
+            return node ? (node.textContent || '').length : 0;
+        }"""
+        # 前面几条场景把假模型调慢过、也切换过模式；从干净页面开始，
+        # 否则残留的提案会让这一条测的不是它想测的东西。
+        page.reload()
+        page.wait_for_function("() => window.__harnessReady === true", timeout=30000)
+        h("resetLearning()")
+        h("type('')")
+        h("typeLive('帮我把这段构建日志从头到尾看一遍', {delay: 40})")
+        # 等灰字真的出现再开对话框：固定等待不够稳。
+        before_ghost = 0
+        for _ in range(12):
+            page.wait_for_timeout(400)
+            before_ghost = page.evaluate(ghost_len)
+            if before_ghost > 0:
+                break
+        page.evaluate(
+            """() => {
+                const dialog = document.createElement('div');
+                dialog.id = 'fake-dialog';
+                dialog.setAttribute('role', 'dialog');
+                dialog.setAttribute('aria-modal', 'true');
+                dialog.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:9999';
+                document.body.appendChild(dialog);
+            }"""
+        )
+        page.wait_for_timeout(600)
+        during_ghost = page.evaluate(ghost_len)
+        page.evaluate("() => document.getElementById('fake-dialog')?.remove()")
+        page.wait_for_timeout(600)
+        after_ghost = page.evaluate(ghost_len)
+        record(
+            "S27 对话框打开时灰字不穿透",
+            before_ghost > 0 and during_ghost == 0 and after_ghost > 0,
+            f"打开前 {before_ghost} → 打开时 {during_ghost} → 关闭后 {after_ghost}",
+        )
+        h("typeLive('', {delay: 0})")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()
