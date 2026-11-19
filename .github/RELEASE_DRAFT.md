@@ -1,4 +1,4 @@
-# v0.31.4 — 第一个公开版本
+# v0.31.5 — 第一个公开版本
 
 > 草稿（未发布）。可直接粘贴到 GitHub 的 Release 表单，或由 `gh release create --notes-file .github/RELEASE_DRAFT.md` 使用。
 
@@ -19,6 +19,8 @@
 第四种不花模型调用：**本地历史补全**，拿你自己说过的话做前缀匹配，毫秒级出灰字，模型结果一到就让位。
 
 ## 安装
+
+先在 DSH 里配好一个可用的模型——插件不改装模型，只借用你现有的路由；没配模型时不会有任何建议。
 
 ```bash
 dsh plugin --profile desktop add github:yugyq/dsh-composer-quill
@@ -53,6 +55,11 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill
 | 一次流式请求挂 83 个 abort 监听器 | 每个分片都新增监听器 | 0.24.0 |
 | 切换语言后返回上一种语言的结果 | 缓存键里没有语言 | 0.24.0 |
 
+## 质量信号
+
+- 单测在 GitHub Actions 上跑（Node 20 与 22），每次 push 与 PR 都会触发
+- 这是第三方插件，与 DeepSeek 官方没有隶属关系
+
 ## 验证
 
 | 项目 | 结果 |
@@ -75,9 +82,9 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill
 
 ## 发布检查清单
 
-- [x] `package.json` 的 `version`、`client.js` 的 `BUILD`、git tag 三者一致（0.31.4）
+- [x] `package.json` 的 `version`、`client.js` 的 `BUILD`、git tag 三者一致（0.31.5）
 - [x] `node smoke-test.mjs` 全绿（57 项）
 - [x] `python dev/verify_daily.py` 全绿（24/24）
-- [ ] 在真实 DSH 里 `build` 显示为 0.31.4
+- [ ] 在真实 DSH 里 `build` 显示为 0.31.5
 - [ ] 仓库可见性改为 public
 - [x] 本文件里的数字与实际输出一致
