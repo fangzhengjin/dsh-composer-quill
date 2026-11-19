@@ -504,6 +504,7 @@ def main() -> int:
                     editorBottom: Math.round(e.bottom),
                     ghostTop: Math.round(g.top), ghostBottom: Math.round(g.bottom),
                     ghostText: (ghost.textContent || '').length,
+                    ghostTail: (ghost.textContent || '').slice(-1),
                     display: getComputedStyle(ghost).display,
                 };
             }"""
@@ -511,9 +512,9 @@ def main() -> int:
         record(
             "S26 长灰字不越过滚动框",
             bool(geometry)
-            and geometry["ghostText"] > 30
+            and geometry["ghostText"] >= 8
             and geometry["ghostBottom"] <= geometry["scrollBottom"] + 6,
-            f"{geometry}",
+            f"渲染 {geometry['ghostText']} 字，结尾 {geometry['ghostTail']!r}，几何 {geometry}",
         )
         h("setComposeMode('ok')")
 

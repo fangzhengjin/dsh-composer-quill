@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.13-dev'
+    const BUILD = '0.31.14-dev'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -1032,6 +1032,27 @@ const COVERED_DEBOUNCE_MS = 1200
         })
       }
 
+      /**
+       * Clip has to look like punctuation, not like a broken glyph: when the
+       * composer shows one line and the tail needs two, cut the text and append an
+       * ellipsis. Tab still inserts the whole proposal — only the preview shortens.
+       */
+      const fitToHeight = (limit) => {
+        if (textEl === null || !(limit > 0)) return
+        const full = textEl.textContent ?? ''
+        if (full === '' || textEl.scrollHeight <= limit + 1) return
+        const chars = Array.from(full)
+        let low = 0
+        let high = chars.length
+        while (low < high) {
+          const mid = Math.ceil((low + high) / 2)
+          textEl.textContent = `${chars.slice(0, mid).join('')}…`
+          if (textEl.scrollHeight <= limit + 1) low = mid
+          else high = mid - 1
+        }
+        textEl.textContent = `${chars.slice(0, Math.max(1, low)).join('')}…`
+      }
+
       const layoutBox = () => {
         if (target === null || target === undefined) return false
         const style = getComputedStyle(target)
@@ -1048,6 +1069,7 @@ const COVERED_DEBOUNCE_MS = 1200
           style.textAlign,
           clip.bottom - top,
         )
+        fitToHeight(clip.bottom - top)
         copyFont(style)
       }
 
@@ -1112,6 +1134,7 @@ const COVERED_DEBOUNCE_MS = 1200
           Math.max(120, contentRight - rect.left),
           'start',
           contentBottom - (rect.top - leading),
+        fitToHeight(contentBottom - (rect.top - leading))
         )
         copyFont(style)
         return true
@@ -2373,6 +2396,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
 
 
 
