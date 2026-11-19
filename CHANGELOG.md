@@ -4,6 +4,11 @@
 
 ## 0.31.x
 
+### 0.31.7
+- 商店物料进入 npm 包：`assets/icon-180.png`、`screenshots.json`
+- 推 `v*` 标签时由 GitHub Actions 用 trusted publishing 发布（OIDC，免令牌免 OTP），带 `--provenance`
+- 无行为变更
+
 ### 未发布（仓库元数据）
 按 DSH 插件生态的收录要求补齐商店物料（不改运行代码，故未升版本）：
 - `assets/icon-180.png`：市场卡片图标（收录要求位图，SVG 会被拒）
