@@ -99,7 +99,7 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill   # 或直接�
 
 ```bash
 npm test                          # 67 项离线单测：解析、鉴权、缓存、流式帧序、语言闸、输入清洗
-npm run test:ui                   # 31 条浏览器场景（自带模拟器，含真实节奏回归）
+npm run test:ui                   # 32 条浏览器场景（自带模拟器，含真实节奏回归）
 npm test -- --filter=transcript   # 只跑某个行为
 npm test -- --list                # 列出全部用例名
 ```
