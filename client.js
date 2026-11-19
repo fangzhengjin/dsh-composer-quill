@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.18-dev'
+    const BUILD = '0.31.19-dev'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -1050,13 +1050,13 @@ const COVERED_DEBOUNCE_MS = 1200
         const full = textNode === null ? '' : textNode.nodeValue ?? ''
         if (full === '' || textEl.scrollHeight <= limit + 1) return
         // 灰字是浮层，不会撑高输入框：先借最多两行的高度，让它像正文一样换行。
-        // 宿主可能已经设了内联 min-height，所以和当前值比较，而不是要求它为空。
-        if (target !== null && savedMinHeight === null) {
+        // 每次重新判断：借过一次后更长的尾巴仍需要更多高度，否则只能被省略号截断。
+        if (target !== null) {
           const line = Number.parseFloat(getComputedStyle(textEl).lineHeight) || 24
           const want = Math.min(textEl.scrollHeight, limit + line * 2)
-          const current = Number.parseFloat(target.style.minHeight) || 0
+          const current = Number.parseFloat(getComputedStyle(target).minHeight) || 0
           if (want > current + 2) {
-            savedMinHeight = target.style.minHeight
+            if (savedMinHeight === null) savedMinHeight = target.style.minHeight
             target.style.minHeight = `${Math.round(want)}px`
             return
           }
@@ -2453,6 +2453,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
 
 
 
