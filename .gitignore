@@ -33,3 +33,7 @@ __pycache__/
 !docs/assets/
 !docs/assets/*.png
 
+# 商店卡片图标与市场详情页截图
+!assets/
+!assets/*.png
+!screenshots.json

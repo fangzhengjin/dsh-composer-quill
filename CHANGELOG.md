@@ -4,6 +4,13 @@
 
 ## 0.31.x
 
+### 未发布（仓库元数据）
+按 DSH 插件生态的收录要求补齐商店物料（不改运行代码，故未升版本）：
+- `assets/icon-180.png`：市场卡片图标（收录要求位图，SVG 会被拒）
+- `screenshots.json`：声明两张市场详情页截图（输入框灰字、插件列表行）
+- `docs/assets/plugin-row.png`：插件列表里的真实截图
+- `package.json` 增加 `dsh-plugin` keyword，仓库 topic 同步添加
+
 ### 0.31.6
 发布到 npm，界面里的「添加插件」终于能用裸包名装：
 - 移除 `private`，加 `publishConfig.access: public` 与 `keywords`

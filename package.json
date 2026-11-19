@@ -47,6 +47,7 @@
     "url": "https://github.com/yugyq/dsh-composer-quill/issues"
   },
   "keywords": [
+    "dsh-plugin",
     "dsh",
     "deepseek-harness",
     "plugin",
