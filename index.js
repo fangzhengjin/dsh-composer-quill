@@ -453,6 +453,40 @@ function groundedness(candidate, contextText) {
   return shared / candidateGrams.size
 }
 
+/** Shorter than this and a "repeat" is just a short phrase both sides share. */
+const REPEAT_MIN_CHARS = 8
+
+/** Every user message already in the transcript, in comparable form. */
+function priorUserMessages(events) {
+  const seen = []
+  for (const event of events ?? []) {
+    if (event?.type !== 'user/message') continue
+    const text = normalizeForCompare(textOfBlocks(event?.data?.content ?? event?.data?.message?.content))
+    if (text.length >= REPEAT_MIN_CHARS) seen.push(text)
+  }
+  return seen
+}
+
+/**
+ * Is this candidate something the user already sent?
+ *
+ * Groundedness cannot answer that: a recycled earlier question matches the
+ * transcript perfectly and scores ~1.0, which is exactly the report "the
+ * suggestion is content from many turns ago". A prediction has to be new.
+ */
+function repeatsEarlierUser(candidate, priorNormalised) {
+  const value = normalizeForCompare(candidate)
+  if (value.length < REPEAT_MIN_CHARS) return false
+  for (const other of priorNormalised ?? []) {
+    if (other === value) return true
+    // One containing the other means the same question asked again with a prefix
+    // or a trailing clause — near-duplicates count as repeats.
+    if (other.length >= REPEAT_MIN_CHARS && value.includes(other)) return true
+    if (value.length >= REPEAT_MIN_CHARS && other.includes(value)) return true
+  }
+  return false
+}
+
 /**
  * A next-message that touches none of the conversation's wording is almost always
  * about something else entirely (the "this has nothing to do with the session"
@@ -1390,6 +1424,22 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
     const lastUser = [...events].reverse().find((event) => event?.type === 'user/message')
     const lastUserText = textOfBlocks(lastUser?.data?.content ?? lastUser?.data?.message?.content)
     let candidates = rankCandidates(parseCandidates(text), { profile, lastAssistant: assistant, lastUser: lastUserText, locale, forced })
+    // A prediction that repeats an earlier user message is not a prediction: the
+    // conversation has moved on. Drop those before the grounding gate, which would
+    // otherwise score them highest precisely because they already exist.
+    if (kind === 'next' && candidates.length > 0) {
+      const prior = priorUserMessages(events)
+      const fresh = candidates.filter((candidate) => !repeatsEarlierUser(candidate, prior))
+      if (fresh.length !== candidates.length) {
+        trace('next-repeated', {
+          kept: fresh.length,
+          dropped: candidates.length - fresh.length,
+          candidates: candidates.length,
+          priorMessages: prior.length,
+        })
+        candidates = fresh
+      }
+    }
     // Grounding check: only for the next-message prediction, where an off-topic
     // guess has no anchor at all. A completion always has the draft to anchor on.
     if (kind === 'next' && candidates.length > 0 && context !== '[]') {
@@ -1811,7 +1861,8 @@ export function apply(ctx) {
 }
 
 /** Pure helpers exposed for the offline smoke test. */
-export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized }
+export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, priorUserMessages, repeatsEarlierUser, REPEAT_MIN_CHARS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized }
+
 
 
 
