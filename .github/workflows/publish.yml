@@ -1,0 +1,53 @@
+name: publish
+
+# Publishes to npm through trusted publishing: no token, no OTP. npm verifies the
+# GitHub OIDC identity against the trusted publisher configured on the package page.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # the OIDC token npm exchanges for publish rights
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # A tag that disagrees with package.json would publish the wrong version.
+      - name: Check that the tag matches package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "package.json: $VERSION / tag: $TAG"
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match package.json $VERSION"
+            exit 1
+          fi
+
+      - name: Unit tests
+        run: node smoke-test.mjs
+
+      # Re-running a tag must not fail the build: npm rejects an existing version.
+      - name: Is this version already on the registry?
+        id: exists
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "dsh-composer-quill@$VERSION" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "$VERSION is already published; nothing to do."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        if: steps.exists.outputs.published == 'false'
+        run: npm publish --provenance --access public

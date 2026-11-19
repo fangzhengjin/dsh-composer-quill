@@ -10,6 +10,7 @@
 - `screenshots.json`：声明两张市场详情页截图（输入框灰字、插件列表行）
 - `docs/assets/plugin-row.png`：插件列表里的真实截图
 - `package.json` 增加 `dsh-plugin` keyword，仓库 topic 同步添加
+- `.github/workflows/publish.yml`：推 tag 时用 npm trusted publishing 自动发布（OIDC，免令牌免 OTP）
 
 ### 0.31.6
 发布到 npm，界面里的「添加插件」终于能用裸包名装：
