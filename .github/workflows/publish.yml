@@ -17,10 +17,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `registry-url` here on purpose: setup-node would inject an .npmrc with a
+      # NODE_AUTH_TOKEN, and npm prefers that (bogus, empty) token over OIDC.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs npm >= 11.5.1; the version bundled with Node is older.
+      - name: Use an npm that supports trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
 
       # A tag that disagrees with package.json would publish the wrong version.
       - name: Check that the tag matches package.json
