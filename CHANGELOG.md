@@ -4,6 +4,13 @@
 
 ## 0.31.x
 
+### 0.31.6
+发布到 npm，界面里的「添加插件」终于能用裸包名装：
+- 移除 `private`，加 `publishConfig.access: public` 与 `keywords`
+- 包名 `dsh-composer-quill` → https://www.npmjs.com/package/dsh-composer-quill
+- README 安装节改为「npm 优先，GitHub 作为未发布改动的备选」，并写清界面输入框该填什么
+- 无行为变更
+
 ### 0.31.5
 公开前的最后准备：
 - README 写清前置条件：**先在 DSH 里配好模型**，插件只借用现有路由
