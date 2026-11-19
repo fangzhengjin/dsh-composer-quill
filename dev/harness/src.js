@@ -40,9 +40,14 @@ window.fetch = async (url, init) => {
     const typo = draft.includes('曰')
     const unchanged = composeMode === 'unchanged'
     // New protocol: Case A streams only the tail; Case B starts with REWRITE:.
+    // 'long' returns a tail long enough to wrap past the composer box: that is the
+    // shape that caught the ghost layer painting outside its editor.
+    const longTail = '，并按时间顺序把每一步的耗时、失败原因和重试次数都列出来，最后给一个可以直接执行的修复步骤，再补一句风险说明；如果日志里还带着堆栈，就先把最外层调用和最先失败的那一帧标出来，其余可以折叠。'
     const reply = typo
       ? 'REWRITE:\n帮我把这段日志整理一下，找出报错的那几行。'
-      : unchanged ? '' : '，找出报错的那几行。'
+      : unchanged ? ''
+        : composeMode === 'long' ? longTail
+        : '，找出报错的那几行。'
     const encoder = new TextEncoder()
     const frame = (event, data) => encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
     const pieces = []
@@ -382,6 +387,8 @@ main().catch((error) => {
   window.__harnessError = String((error && error.stack) || error)
   console.error(error)
 })
+
+
 
 
 

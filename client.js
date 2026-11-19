@@ -1019,12 +1019,15 @@ const COVERED_DEBOUNCE_MS = 1200
         })
       }
 
-      const place = (left, top, width, maxWidth, align) => {
+      const place = (left, top, width, maxWidth, align, maxHeight = null) => {
         Object.assign(textEl.style, {
           left: `${Math.round(left)}px`,
           top: `${Math.round(top)}px`,
           width: width === null ? 'auto' : `${Math.round(width)}px`,
           maxWidth: maxWidth === null ? 'none' : `${Math.round(maxWidth)}px`,
+          // A fixed layer is not clipped by the editor: without a height limit a long
+          // tail wrapped below the composer and painted over the page instead.
+          maxHeight: maxHeight === null ? 'none' : `${Math.round(Math.max(18, maxHeight))}px`,
           textAlign: align,
         })
       }
@@ -1051,6 +1054,7 @@ const COVERED_DEBOUNCE_MS = 1200
         // The ghost must stay inside the composer's content box: a fixed layer is
         // not clipped by the editor, so a viewport-wide limit would draw outside.
         const contentRight = box.right - px(style.borderRightWidth) - px(style.paddingRight)
+      const contentBottom = box.bottom - px(style.borderBottomWidth) - px(style.paddingBottom)
         let rect = caretRect()
         // A collapsed-range rect at the line start is a measurement failure, not
         // a caret at the start: fall back to the last character's right edge —
@@ -1066,7 +1070,14 @@ const COVERED_DEBOUNCE_MS = 1200
         const lineHeight = px(style.lineHeight) || rect.height
         const glyphHeight = rect.height || lineHeight
         const leading = Math.max(0, Math.round((lineHeight - glyphHeight) / 3))
-        place(rect.left, rect.top - leading, null, Math.max(120, contentRight - rect.left), 'start')
+        place(
+        rect.left,
+        rect.top - leading,
+        null,
+        Math.max(120, contentRight - rect.left),
+        'start',
+        contentBottom - (rect.top - leading),
+      )
         copyFont(style)
         return true
       }
@@ -1103,6 +1114,7 @@ const COVERED_DEBOUNCE_MS = 1200
           'opacity:.9',
           'pointer-events:none',
           'user-select:none',
+          'overflow:hidden',
           'display:none',
         ].join(';')
         host.appendChild(textEl)
@@ -2293,6 +2305,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
 
 
 

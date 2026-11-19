@@ -483,6 +483,40 @@ def main() -> int:
         )
         h("setComposeTiming({first: 0, step: 220})")
 
+        # ---- S26 长灰字不得溢出输入框
+        # A long tail wraps; the layer is position:fixed and is not clipped by the
+        # editor, so without a height limit it painted over the page below.
+        reset("")
+        h("setComposeMode('long')")
+        h("typeLive('帮我把这段构建日志从头到尾看一遍', {delay: 40})")
+        page.wait_for_timeout(2200)
+        geometry = page.evaluate(
+            """() => {
+                const editor = document.querySelector('[data-composer-input]');
+                const ghost = document.querySelector('[data-composer-quill="text"]');
+                if (!editor || !ghost) return null;
+                const e = editor.getBoundingClientRect();
+                const g = ghost.getBoundingClientRect();
+                return {
+                    editorBottom: Math.round(e.bottom),
+                    editorTop: Math.round(e.top),
+                    ghostTop: Math.round(g.top),
+                    ghostBottom: Math.round(g.bottom),
+                    ghostText: (ghost.textContent || '').length,
+                    display: getComputedStyle(ghost).display,
+                };
+            }"""
+        )
+        record(
+            "S26 长灰字不溢出输入框",
+            bool(geometry)
+            and geometry["ghostText"] > 20
+            and geometry["ghostTop"] >= geometry["editorTop"] - 6
+            and geometry["ghostBottom"] <= geometry["editorBottom"] + 6,
+            f"{geometry}",
+        )
+        h("setComposeMode('ok')")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()
