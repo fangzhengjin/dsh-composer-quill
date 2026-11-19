@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.7'
+    const BUILD = '0.31.8'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -782,6 +782,20 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     /**
+     * Does a request already in flight still cover this draft?
+     *
+     * The tail it is producing is appended to `requested`, so a draft that only
+     * grew keeps that tail valid — cancelling it and starting over is what made
+     * the ghost flicker on every keystroke. A draft that shrank or diverged is
+     * not covered: that request can no longer be pasted anywhere.
+     */
+    function inFlightCovers(requested, draft) {
+      if (typeof requested !== 'string' || requested === '') return false
+      if (typeof draft !== 'string') return false
+      return draft.length >= requested.length && draft.startsWith(requested)
+    }
+
+    /**
      * The Host joins on a trimmed base. A reply that echoes the untrimmed draft
      * must not put a stray newline into the proposal.
      */
@@ -1388,6 +1402,13 @@ const COVERED_DEBOUNCE_MS = 1200
           if (mode === 'compose') {
             if (live.running || draftNow.trim().length < MIN_DRAFT_CHARS) return
             if (dismissedDraft.current === draftNow) return
+            // The draft only grew since the in-flight request started: its tail
+            // still applies, so keep streaming it instead of cancelling.
+            const inFlight = ghost.getSnapshot()
+            if (inFlight.phase === 'loading' && inFlightCovers(inFlight.requested, draftNow)) {
+              report('reuse', { sessionId: live.sessionId, draftLength: draftNow.length, detail: 'in-flight' })
+              return
+            }
           }
           const kind = mode === 'next' ? 'next' : 'compose'
 
@@ -2252,9 +2273,10 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
 
 
 

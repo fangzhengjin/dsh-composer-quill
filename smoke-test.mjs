@@ -974,6 +974,22 @@ check('a proposal already typed into the editor is stale', () => {
   assert.equal(proposalIsStale('', '看一下'), false)
 })
 
+check('a request in flight keeps covering a draft that only grew', () => {
+  const { inFlightCovers } = moduleExports.__test
+  // The measured failure: first delta lands ~1.9 s after the request, and every
+  // keystroke used to cancel the request that was about to produce the ghost.
+  assert.equal(inFlightCovers('帮我把这段', '帮我把这段构建日志'), true)
+  assert.equal(inFlightCovers('帮我把这段', '帮我把这段'), true)
+  // Shrunk: the tail no longer belongs to this draft.
+  assert.equal(inFlightCovers('帮我把这段构建日志', '帮我把这段'), false)
+  // Diverged mid-way: the in-flight tail can no longer be pasted.
+  assert.equal(inFlightCovers('帮我把这段', '帮我把那份'), false)
+  // Nothing to cover.
+  assert.equal(inFlightCovers('', '帮我把这段'), false)
+  assert.equal(inFlightCovers(null, '帮我把这段'), false)
+  assert.equal(inFlightCovers('帮我把这段', null), false)
+})
+
 check('the turn counter, not the message count, decides reuse', () => {
   const { saveSuggestion, loadSuggestion, bumpEpoch, syncEpoch } = moduleExports.__test
   window.localStorage.clear()

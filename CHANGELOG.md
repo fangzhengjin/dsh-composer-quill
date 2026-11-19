@@ -4,6 +4,13 @@
 
 ## 0.31.x
 
+### 0.31.8
+修掉「打字时灰字一闪就没」的根因：**在途请求不再因为草稿延长而被取消**。
+- 新增 `inFlightCovers(requested, draft)`：草稿只是在原草稿上延长时，在途请求产出的尾巴依然接得上，判定为「已覆盖」
+- `request()` 在 compose 分支里先查这条，命中就记 `reuse(detail=in-flight)` 直接返回，不再 `abort()` 重发
+- 实测背景：首字节中位 1.9 秒，而重触发间隔 0.7 秒、每次按键都会重发，旧逻辑下请求几乎总在出字前被取消（本会话 142 次请求里 35 次 `cancelled`）
+- 单测 57 → 58 项（含草稿增长/缩短/分叉三类断言），浏览器场景 24/24
+
 ### 0.31.7
 - 商店物料进入 npm 包：`assets/icon-180.png`、`screenshots.json`
 - 推 `v*` 标签时由 GitHub Actions 用 trusted publishing 发布（OIDC，免令牌免 OTP），带 `--provenance`
