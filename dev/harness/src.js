@@ -5,9 +5,18 @@ const calls = []
 window.__harnessCalls = calls
 let composeMode = 'ok'
 let composeFailures = 0
+// A real model needs ~1.9 s to its first delta. The scenarios that check what the
+// client does while it waits have to be able to make the fake model that slow.
+let composeTiming = { first: 0, step: 220 }
+window.__harnessAborts = 0
 
 window.fetch = async (url, init) => {
   const body = init && init.body ? JSON.parse(init.body) : {}
+  // A cancelled request is exactly what the tuning is about, so count aborts.
+  if (init && init.signal && String(url).includes('compose')) {
+    if (init.signal.aborted) window.__harnessAborts += 1
+    else init.signal.addEventListener('abort', () => { window.__harnessAborts += 1 }, { once: true })
+  }
   calls.push({ url: String(url), mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : 'next'), draft: body.draft ?? '', event: body.event ?? '', detail: body.detail ?? '', sessionId: body.sessionId ?? '' })
   if (String(url).includes('/composer-quill/history')) {
     return {
@@ -51,11 +60,21 @@ window.fetch = async (url, init) => {
     }
     const stream = new ReadableStream({
       async start(controller) {
+        // The first frame is the long wait in a real call; the rest are cheap.
+        await new Promise((resolve) => setTimeout(resolve, composeTiming.first))
         for (const piece of pieces) {
-          controller.enqueue(piece)
-          await new Promise((resolve) => setTimeout(resolve, 220))
+          try {
+            controller.enqueue(piece)
+          } catch {
+            return // the client cancelled: stop producing frames
+          }
+          await new Promise((resolve) => setTimeout(resolve, composeTiming.step))
         }
-        controller.close()
+        try {
+          controller.close()
+        } catch {
+          // already cancelled
+        }
       },
     })
     return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8' } })
@@ -243,6 +262,14 @@ async function main() {
     setComposeMode(mode) {
       composeMode = mode
       composeFailures = 0
+    },
+    /** {first, step} in ms: how long the fake model takes to answer. */
+    setComposeTiming(timing) {
+      composeTiming = { first: Number(timing?.first ?? 0), step: Number(timing?.step ?? 220) }
+    },
+    aborts: () => window.__harnessAborts,
+    resetMetrics() {
+      window.__harnessAborts = 0
     },
     accept(shift = false) {
       editor.focus()

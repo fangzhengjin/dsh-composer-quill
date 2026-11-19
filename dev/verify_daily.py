@@ -407,6 +407,82 @@ def main() -> int:
         )
         h("resetLearning()")
 
+        # ---- S23 真实节奏：快速连打 + 模型慢，取消次数要有上限
+        # A real model takes ~1.9s to its first delta. Typing faster than that used
+        # to cancel every request that was about to paint the ghost.
+        reset("")
+        h("resetMetrics()")
+        h("setComposeTiming({first: 1800, step: 260})")
+        h("rec.start(50)")
+        h("typeLive('帮我把这段构建日志从头到尾看一遍，找出最先失败的那一步', {delay: 45})")
+        page.wait_for_timeout(600)
+        typed_samples = h("rec.stop()")
+        typing_s = max(0.1, (typed_samples[-1]["t"] - typed_samples[0]["t"]) / 1000)
+        aborts_during_typing = h("aborts()")
+        # One cancel per retrigger interval is the worst case the design allows.
+        allowed = int(typing_s / 1.5) + 2
+        record(
+            "S23 快速连打期间取消失控",
+            aborts_during_typing <= allowed,
+            f"{aborts_during_typing} 次取消 / {typing_s:.1f}s（上限 {allowed}）",
+        )
+
+        # ---- S24 停手等灰字：停手后必须稳定出现，且不再反复重发
+        page.wait_for_timeout(2600)
+        settled = h("snapshot()")
+        settled_chip = proposal_of(settled)
+        settled_ghost = settled["text"]["text"] if settled["text"] else ""
+        calls_after_settle = compose_calls()
+        page.wait_for_timeout(2400)
+        later = h("snapshot()")
+        later_chip = proposal_of(later)
+        calls_later = compose_calls()
+        record(
+            "S24 停手后给出灰字",
+            bool(settled_chip or settled_ghost),
+            f"chip={settled_chip[:24]!r} ghost={settled_ghost[:16]!r}",
+        )
+        record(
+            "S24 灰字在 2.4s 内不消失也不重发",
+            later_chip == settled_chip and calls_later - calls_after_settle <= 1,
+            f"再次采样 chip={later_chip[:20]!r} 新增请求={calls_later - calls_after_settle}",
+        )
+
+        # ---- S25 频繁取消：模型比重触发更慢时，取消要有界，最后一次仍能出建议
+        reset("")
+        h("resetMetrics()")
+        h("setComposeTiming({first: 3200, step: 300})")
+        started = page.evaluate("() => performance.now()")
+        for burst in ["第一段快速输入", "第二段继续补充", "第三段再加一句"]:
+            h(f"typeLive({burst!r}, {{delay: 55}})")
+            page.wait_for_timeout(700)
+        elapsed_s = (page.evaluate("() => performance.now()") - started) / 1000
+        aborts_slow = h("aborts()")
+        allowed_slow = int(elapsed_s / 1.5) + 3
+        record(
+            "S25 模型比重触发慢时取消有界",
+            aborts_slow <= allowed_slow,
+            f"{aborts_slow} 次取消 / {elapsed_s:.1f}s（上限 {allowed_slow}）",
+        )
+        # A 3.2 s first delta plus three frames needs ~4.1 s; poll rather than guess.
+        final_chip = ""
+        final_ghost = ""
+        phase = ""
+        for _ in range(16):
+            page.wait_for_timeout(500)
+            final_snap = h("snapshot()")
+            final_chip = proposal_of(final_snap)
+            final_ghost = final_snap["text"]["text"] if final_snap["text"] else ""
+            phase = (h("store()") or {}).get("phase", "")
+            if final_chip or final_ghost:
+                break
+        record(
+            "S25 最终仍能给出建议",
+            bool(final_chip or final_ghost),
+            f"chip={final_chip[:24]!r} ghost={final_ghost[:16]!r} phase={phase} compose={compose_calls()}",
+        )
+        h("setComposeTiming({first: 0, step: 220})")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()

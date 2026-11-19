@@ -1421,6 +1421,7 @@ const COVERED_DEBOUNCE_MS = 1200
           // Compose streams: deltas land as they arrive and are repainted once
           // per frame, so the ghost starts growing immediately.
           if (mode === 'compose') {
+            lastRequested.current = draftNow
             const active = ghost.streamStart(live.sessionId, 'compose', draftNow)
             let idle = null
             let buffer = ''
@@ -1659,7 +1660,9 @@ const COVERED_DEBOUNCE_MS = 1200
         const inFlightFor = state.requested
         const stillApplies = typeof inFlightFor === 'string' && inFlightFor !== '' && draft.startsWith(inFlightFor)
         if (state.phase === 'loading' && inFlightFor !== null && inFlightFor !== draft && !stillApplies) ghost.cancel()
-        lastRequested.current = draft
+          // Not claimed here: request() records the draft only when a call really
+          // starts. Marking a suppressed draft as answered stalled the ghost — the
+          // retrigger then skipped it forever.
         // The draft still lies inside the proposal already on screen: keep using
         // its tail and wait much longer before paying for a new call.
         const stored = ghost.getSnapshot()
@@ -1702,8 +1705,16 @@ const COVERED_DEBOUNCE_MS = 1200
           if (dismissedDraft.current === text) return
           const pending = ghost.getSnapshot()
           if (pending.phase !== 'idle' && pending.forDraft === text) return
+          // The draft still sits inside the proposal on screen: the draft effect has
+          // already scheduled a debounced request for it, so the safety net must not
+          // fire an immediate second one (S18 measured that as a wasted call).
+          if (pending.phase === 'ready' && pending.items.length > 0) {
+            const shown = pending.items[pending.index] ?? ''
+            if (shown.startsWith(text)) return
+          }
           report('retrigger', { sessionId: live.sessionId, draftLength: text.length, detail: 'interval' })
-          lastRequested.current = text
+          // request() records the draft once a call actually starts: recording it
+          // here marked suppressed drafts as answered and stalled the ghost.
           request('compose', text)
         }, RETRIGGER_INTERVAL_MS)
         return () => window.clearInterval(interval)
