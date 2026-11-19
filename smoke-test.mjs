@@ -11,6 +11,8 @@ process.env.DSH_COMPOSER_QUILL_NO_CACHE = '1'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
+import { homedir, tmpdir as tmpdirOf } from 'node:os'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
@@ -186,8 +188,12 @@ check('the on-disk cache is inert in tests and knows where it lives', () => {
   // DSH_COMPOSER_QUILL_NO_CACHE=1 is set by this suite: loadCache returns 0 entries,
   // so a test run can never hand a stale answer to the next one.
   assert.equal(loadCache(), 0)
-  assert.ok(cacheFile().endsWith('composer-quill-cache.json'), cacheFile())
-  assert.ok(cacheFile().includes('.dsh'), cacheFile())
+  // The path follows the host's own directory, so assert the contract rather than
+  // one machine's layout: an absolute path ending with the cache filename.
+  const file = cacheFile()
+  assert.ok(file.endsWith('composer-quill-cache.json'), file)
+  assert.ok(isAbsolute(file), file)
+  assert.ok(file.startsWith(process.env.DSH_PROFILE_DIR ?? process.env.DSH_HOME ?? homedir()), file)
 })
 
 
@@ -1568,5 +1574,6 @@ if (failed > 0) {
 }
 console.log(failed === 0 ? 'ALL CHECKS PASSED' : `${failed} CHECK(S) FAILED`)
 process.exit(failed === 0 ? 0 : 1)
+
 
 
