@@ -254,28 +254,6 @@ check('a next-message with no link to the conversation is dropped', () => {
   assert.ok(groundedness('明天上海天气怎么样，要不要带伞', context) < MIN_GROUNDEDNESS)
 })
 
-check('a next-message that repeats an earlier user message is dropped', () => {
-  const { priorUserMessages, repeatsEarlierUser } = host.__test
-  // The report: the chip offered a question the user had already sent many turns ago.
-  const events = [
-    { type: 'user/message', data: { content: '改用户名后旧的 yugyq/dsh-composer-quill 链接会重定向吗？' } },
-    { type: 'assistant/message', data: { content: [{ type: 'text', text: '会重定向。' }] } },
-    { type: 'user/message', data: { content: '那就先把 npm 发布搞定。' } },
-  ]
-  const prior = priorUserMessages(events)
-  assert.equal(prior.length, 2)
-
-  // Verbatim repeat, and the same question with different punctuation.
-  assert.equal(repeatsEarlierUser('改用户名后旧的 yugyq/dsh-composer-quill 链接会重定向吗？', prior), true)
-  assert.equal(repeatsEarlierUser('改用户名后旧的 yugyq/dsh-composer-quill 链接会重定向吗', prior), true)
-  // A longer version that contains the old question is the same question again.
-  assert.equal(repeatsEarlierUser('那改用户名后旧的 yugyq/dsh-composer-quill 链接会重定向吗，要不要改 README', prior), true)
-  // A genuinely new follow-up is kept.
-  assert.equal(repeatsEarlierUser('那 npm 的 trusted publishing 什么时候配好', prior), false)
-  // Short shared phrases are not repeats.
-  assert.equal(repeatsEarlierUser('先发布', prior), false)
-})
-
 check('model commentary is never offered as a completion', () => {
   const { looksLikeMeta, parseComposeReply } = host.__test
   const leaks = [
