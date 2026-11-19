@@ -1,6 +1,6 @@
 # 架构设计
 
-> 适用版本：0.31.4 ｜ 代码：`index.js`（宿主，约 1820 行）、`client.js`（浏览器，约 2330 行）
+> 适用版本：0.31.19 ｜ 代码：`index.js`（宿主，约 1840 行）、`client.js`（浏览器，约 2540 行）
 
 ## 1. 定位与边界
 
@@ -14,29 +14,24 @@
 
 ## 2. 两个半边
 
-```
-┌──────────────────────────── DSH Host（Node） ────────────────────────────┐
-│  index.js                                                                │
-│   ├─ POST /composer-quill/predict   → JSON 或 SSE（compose 走 SSE）        │
-│   ├─ POST /composer-quill/history   → 用户自己的历史消息（零模型调用）        │
-│   └─ POST /composer-quill/beacon    → 浏览器侧诊断（受限字段）               │
-│                                                                          │
-│   cache（内存, TTL 120s） ──scheduleCacheSave──▶ composer-quill-cache.json │
-│   composeInFlight / inflight（单飞）                                       │
-└──────────────────────────────────▲───────────────────────────────────────┘
-                                   │ fetch（token 或同源 + 自定义头）
-┌──────────────────────────────────┴───────────────────────────────────────┐
-│  Browser                                                                 │
-│   client.js                                                              │
-│   ├─ slot: conversation.input.dock   → 常驻状态行（chip）                  │
-│   ├─ slot: settings.general.item     → 设置卡片                            │
-│   ├─ createGhostStore()              → 建议状态机                          │
-│   ├─ createGhostLayer()              → 内联灰字（position:fixed 覆盖层）     │
-│   └─ localStorage                    → 建议持久化 + 设置                    │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+**宿主侧（`index.js`，Cordis 加载）**
 
-两半通过 `package.json` 的 `dsh.client` 字段装配：宿主侧 `index.js` 由 Cordis 加载，浏览器侧 `client.js` 由 `__ModuleLoader__` 注入并按 **rev 钉在启动图里**（改代码必须重启 DSH，刷新页面不够）。
+- `POST /composer-quill/predict` —— JSON 或 SSE（`compose` 走 SSE）
+- `POST /composer-quill/history` —— 用户自己的历史消息，零模型调用
+- `POST /composer-quill/beacon` —— 浏览器侧诊断，只收受限字段
+- 内存缓存（TTL 120s），异步落盘到 `composer-quill-cache.json`
+- `composeInFlight` / `inflight` —— 同键并发只调一次模型的单飞机制
+
+**浏览器侧（`client.js`，由 `__ModuleLoader__` 注入）**
+
+- `conversation.input.dock` —— 常驻状态行
+- `settings.general.item` —— 设置卡片
+- `createGhostStore()` —— 建议状态机
+- `createGhostLayer()` —— 建议层，嵌在输入框内，随宿主裁切
+- `localStorage` —— 建议持久化与设置
+
+两半通过 `package.json` 的 `dsh.client` 字段装配。浏览器侧按 **rev 钉在启动图里**：改代码必须重启 DSH，刷新页面不够。
+
 
 ## 3. 请求生命周期
 

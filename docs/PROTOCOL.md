@@ -1,6 +1,6 @@
 # 接口与流式协议
 
-> 适用版本：0.31.4 ｜ 三条路由、两种响应形态（JSON / SSE）
+> 适用版本：0.31.19 ｜ 三条路由、两种响应形态（JSON / SSE）
 
 ## 1. 鉴权
 
@@ -143,7 +143,7 @@ SSE 路径的状态码在 `flushHeaders()` 之前确定：会话不活会在发�
 浏览器侧诊断，字段受限（`event` ≤40 字符、`sessionId` ≤40 字符），仅写本地日志：
 
 ```json
-{ "event": "dock-state", "sessionId": "session-…", "build": "0.31.4", "detail": "{…}" }
+{ "event": "dock-state", "sessionId": "session-…", "build": "0.31.19", "detail": "{…}" }
 ```
 
 成功返回 `{ "ok": true }`；读取超时 30 s，405 时会带 `allow: POST`。
