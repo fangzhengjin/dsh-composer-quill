@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.14-dev'
+    const BUILD = '0.31.15-dev'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -984,6 +984,8 @@ const COVERED_DEBOUNCE_MS = 1200
     function createGhostLayer() {
       let host = null
       let textEl = null
+      // 编辑框自己的 min-height，提案撑高之前先存下来。
+      let savedMinHeight = null
       let target = null
       let placeholderEl = null
       let placeholderDisplay = ''
@@ -1041,6 +1043,16 @@ const COVERED_DEBOUNCE_MS = 1200
         if (textEl === null || !(limit > 0)) return
         const full = textEl.textContent ?? ''
         if (full === '' || textEl.scrollHeight <= limit + 1) return
+        // 灰字是浮层，不会撑高输入框：先借最多两行的高度，让它像正文一样换行。
+        if (target !== null && savedMinHeight === null && target.style.minHeight === '') {
+          const line = Number.parseFloat(getComputedStyle(textEl).lineHeight) || 24
+          const want = Math.min(textEl.scrollHeight, limit + line * 2)
+          if (want > limit + 2) {
+            savedMinHeight = target.style.minHeight
+            target.style.minHeight = `${Math.round(want)}px`
+            return
+          }
+        }
         const chars = Array.from(full)
         let low = 0
         let high = chars.length
@@ -1141,6 +1153,10 @@ const COVERED_DEBOUNCE_MS = 1200
       }
 
       const clear = () => {
+        if (target !== null && savedMinHeight !== null) {
+          target.style.minHeight = savedMinHeight
+          savedMinHeight = null
+        }
         if (host !== null) {
           host.remove()
           host = null
@@ -2396,6 +2412,7 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
 
 
 
