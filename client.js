@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.12-dev'
+    const BUILD = '0.31.13-dev'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -1033,15 +1033,20 @@ const COVERED_DEBOUNCE_MS = 1200
       }
 
       const layoutBox = () => {
+        if (target === null || target === undefined) return false
         const style = getComputedStyle(target)
         const rect = target.getBoundingClientRect()
+        const clip = clipBox()
         const px = (value) => Number.parseFloat(value) || 0
+        const left = Math.max(rect.left + px(style.borderLeftWidth) + px(style.paddingLeft), clip.left)
+        const top = Math.max(rect.top + px(style.borderTopWidth) + px(style.paddingTop), clip.top)
         place(
-          rect.left + px(style.borderLeftWidth) + px(style.paddingLeft),
-          rect.top + px(style.borderTopWidth) + px(style.paddingTop),
-          Math.max(0, rect.width - px(style.paddingLeft) - px(style.paddingRight)),
+          left,
+          top,
+          Math.max(0, Math.min(rect.width - px(style.paddingLeft) - px(style.paddingRight), clip.right - left)),
           null,
           style.textAlign,
+          clip.bottom - top,
         )
         copyFont(style)
       }
@@ -1052,6 +1057,8 @@ const COVERED_DEBOUNCE_MS = 1200
        * it grows taller than the visible card and scrolls.
        */
       const clipBox = () => {
+        // 测试桩里可能还没有编辑器：没有目标就没有裁切框。
+        if (target === null || target === undefined) return { left: 0, right: 0, top: 0, bottom: 0 }
         const targetRect = target.getBoundingClientRect()
         let node = target.parentElement
         for (let depth = 0; node !== null && depth < 8; depth += 1) {
@@ -1074,6 +1081,7 @@ const COVERED_DEBOUNCE_MS = 1200
       }
 
       const layoutCaret = () => {
+        if (target === null || target === undefined) return false
         const style = getComputedStyle(target)
         const px = (value) => Number.parseFloat(value) || 0
         const box = target.getBoundingClientRect()
@@ -1166,6 +1174,12 @@ const COVERED_DEBOUNCE_MS = 1200
             x: Math.round(textRect.x), y: Math.round(textRect.y),
             w: Math.round(textRect.width), h: Math.round(textRect.height),
           },
+          clip: (() => {
+            const box = clipBox()
+            return { left: Math.round(box.left), right: Math.round(box.right), top: Math.round(box.top), bottom: Math.round(box.bottom) }
+            })(),
+          maxHeight: style === null ? null : style.maxHeight,
+          overflow: style === null ? null : style.overflow,
           color: style === null ? null : style.color,
           opacity: style === null ? null : style.opacity,
           display: style === null ? null : style.display,
@@ -2359,6 +2373,8 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
+
 
 
 
