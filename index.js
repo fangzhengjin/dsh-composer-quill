@@ -51,7 +51,14 @@ const RESTATE_PREFIX_MIN_CHARS = 4
 /** Below this many characters a "tail" is guesswork: ask for a full message. */
 const MIN_TAIL_DRAFT_CHARS = 4
 const MAX_NORMALIZED_CHARS = 8000
-const MAX_TOKENS = 500
+/**
+ * Response budget for one call. 500 measured too tight: with a reasoning model
+ * the thinking tokens can consume the whole budget and the reply comes back
+ * empty — that was the "no suggestion after this turn" report. The prompt already
+ * bounds the answer (three candidates, one short message), so this is headroom for
+ * thinking, not permission for longer suggestions.
+ */
+const MAX_TOKENS = 1200
 // A cache key already contains the Session, the transcript version, the model, the
 // language and the browser's turn counter: if all of that is unchanged the answer is
 // still the answer, and re-sampling it costs money for nothing. Expiry is therefore
