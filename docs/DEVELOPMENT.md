@@ -1,6 +1,6 @@
 # 开发与验证
 
-> 适用版本：0.14.1 ｜ 无构建步骤：宿主与浏览器两端都是手写 ESM
+> 适用版本：0.31.4 ｜ 无构建步骤：宿主与浏览器两端都是手写 ESM
 
 ## 1. 目录结构
 
@@ -68,7 +68,7 @@ Get-Content "$env:USERPROFILE\.dsh\composer-quill.log" -Tail 20 | Select-String 
 cd dev/harness; node node_modules/esbuild/bin/esbuild src.js --bundle --format=iife --target=chrome120 --outfile=bundle.js
 ```
 
-22 个场景（S1–S19）覆盖：逐字输入、快速连打、Esc 抑制、失败重试、长草稿、切会话、超短草稿、空行锚点、历史补全、逐词/整条采纳、清空重弹、行常驻、覆盖区间零调用、流式增长。
+24 个场景（S1–S22）覆盖：逐字输入、快速连打、Esc 抑制、失败重试、长草稿、切会话、超短草稿、空行锚点、历史补全、整条采纳、清空重弹、行常驻、覆盖区间零调用、流式增长、采纳反馈重排、切回会话复用。
 
 ### 3.3 真机脚本（`python dev/verify_*.py <url>`）
 
