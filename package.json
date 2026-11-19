@@ -2,7 +2,7 @@
   "name": "dsh-composer-quill",
   "version": "0.31.19",
   "type": "module",
-  "description": "Quill: completion for the DeepSeek Harness composer: predicts your next message and completes what you are typing.",
+  "description": "在 DSH 的输入框里提前把话写好：回合结束后给出下一句，打字时补完后半句，顺手修掉错字和标点。",
   "license": "MIT",
   "engines": {
     "dsh": ">=0.2.1-rc.2 <0.3.0",
