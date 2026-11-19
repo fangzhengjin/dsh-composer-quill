@@ -59,6 +59,41 @@ console.log(`result    : ${results.length} 条，其中 empty/skipped ${skipped}
 console.log(`首字节    : ${median === null ? '(无样本)' : `中位 ${median} ms，样本 ${deltas.length}`}`)
 console.log('')
 
+// Per-build breakdown. Only beacons carry `build`, so a request is attributed to
+// the last build that reported one — beacons fire on every dock-state change, so
+// the attribution is close enough to compare two tuning runs.
+const byBuild = new Map()
+let currentBuild = '(unknown)'
+for (const event of events) {
+  if (event.build) currentBuild = event.build
+  const bucket = byBuild.get(currentBuild) ?? { requests: 0, cancelled: 0, retrigger: 0, gap: [] }
+  if (event.event === 'request') bucket.requests += 1
+  if (event.event === 'cancelled') bucket.cancelled += 1
+  if (event.event === 'beacon' && event.stage === 'retrigger') {
+    bucket.retrigger += 1
+    const at = Date.parse(event.at)
+    if (bucket.lastAt !== undefined) bucket.gap.push(at - bucket.lastAt)
+    bucket.lastAt = at
+  }
+  byBuild.set(currentBuild, bucket)
+}
+if (byBuild.size > 0) {
+  console.log('按 build 拆分:')
+  for (const [build, bucket] of byBuild) {
+    const rate = bucket.requests === 0 ? null : Math.round((bucket.cancelled / bucket.requests) * 100)
+    const gaps = [...bucket.gap].sort((a, b) => a - b)
+    const gapFast = gaps.length === 0 ? null : gaps[Math.floor(gaps.length * 0.2)]
+    console.log(
+      `  ${build.padEnd(9)} 请求 ${String(bucket.requests).padStart(3)}  ` +
+      `取消 ${String(bucket.cancelled).padStart(3)}${rate === null ? '' : `（${rate}%）`}  ` +
+      `重触发 ${String(bucket.retrigger).padStart(3)}` +
+      (gapFast === null ? '' : `  重触发最快间隔 ${gapFast} ms`),
+    )
+  }
+  console.log('')
+}
+
+
 // The report this pass is checking: a prediction that belongs to a topic the
 // conversation left behind. Surface the actual candidate texts so they can be read.
 const repeated = events.filter((event) => event.event === 'next-repeated')

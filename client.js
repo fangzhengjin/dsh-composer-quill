@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.11'
+    const BUILD = '0.31.12-dev'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -46,6 +46,12 @@ window.__ModuleLoader__.load({
     const COMPOSE_DEBOUNCE_MS = 120
 /** While the draft stays inside the on-screen proposal, wait this long. */
 const COVERED_DEBOUNCE_MS = 1200
+    /**
+     * Safety-net poll for the composer DOM. It has to be slower than the model's
+     * first delta (measured median ~1.9 s): firing sooner only cancels the request
+     * that was about to paint the ghost. At 700 ms a third of all requests died.
+     */
+    const RETRIGGER_INTERVAL_MS = 1500
     const MIN_DRAFT_CHARS = 1
     const CLIENT_TIMEOUT_MS = 20000
 
@@ -1699,7 +1705,7 @@ const COVERED_DEBOUNCE_MS = 1200
           report('retrigger', { sessionId: live.sessionId, draftLength: text.length, detail: 'interval' })
           lastRequested.current = text
           request('compose', text)
-        }, 700)
+        }, RETRIGGER_INTERVAL_MS)
         return () => window.clearInterval(interval)
       }, [ghost, request])
 
@@ -2276,6 +2282,8 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
+
+
 
 
 
