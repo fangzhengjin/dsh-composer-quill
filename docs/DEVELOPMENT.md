@@ -47,6 +47,24 @@ $dsh = "$env:USERPROFILE\.dsh\desktop-preview-test\app\resources\runtime\cli\bin
 Get-Content "$env:USERPROFILE\.dsh\composer-quill.log" -Tail 20 | Select-String '"build"'
 ```
 
+### 2.1 日常调试：让桌面端直接吃本地目录
+
+发版 → 安装 → 重启 的循环太慢。把桌面端那条依赖换成 `link:`，改完代码只要重启：
+
+```powershell
+& $dsh plugin --profile desktop add "C:\…\dsh-composer-quill"
+# 依赖会变成 link:C:/…/dsh-composer-quill，node_modules 里是指向仓库的链接
+```
+
+之后：改代码 → `node smoke-test.mjs` → **重启 DSH**。不用 `npm publish`，也不用重装。
+
+两条纪律，都是踩过的坑：
+
+- **切回 npm 版本前先移除插件**（`dsh plugin --profile desktop remove dsh-composer-quill`，且 DSH 已关闭）。直接 `add` 一个新版本号会让 pnpm 替换那个链接；上一次替换从链接穿进仓库，删掉了 `.git` 的 HEAD、config、index。切之前先确认 `git status` 干净、有远端或 bundle 备份。
+- **不要手工 `New-Item -ItemType Junction` 造链接**。用 `dsh plugin add <目录>` 让 pnpm 自己建，它知道怎么安全地拆除。
+
+`build` 字段这时反映的是工作区里 `client.js` 的 `BUILD` 常量——改版本号就能立刻确认加载的是不是新代码。
+
 ## 3. 三层测试
 
 ### 3.1 单测（`node smoke-test.mjs`）
