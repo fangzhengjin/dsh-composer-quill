@@ -34,6 +34,14 @@ const MAX_CANDIDATES = 3
 const MAX_TRANSCRIPT_CHARS = 9000
 const MAX_MESSAGE_CHARS = 2200
 const MAX_ROWS = 14
+/**
+ * How far back a relevance-scored row may be pulled into the window. Scored over
+ * the whole session, one shared keyword was enough to drag an hour-old topic back
+ * in, and the model then answered that topic instead of the current one.
+ */
+const BACKFILL_WINDOW_EVENTS = 40
+/** Below this many user messages the opening request still describes the topic. */
+const DIGEST_OPENING_MAX_USER_MESSAGES = 8
 const MAX_CANDIDATE_CHARS = 140
 const MAX_DRAFT_CHARS = 6000
 /** Cap one history entry so `/history` cannot return a multi-megabyte body. */
@@ -280,7 +288,11 @@ function transcriptOf(events, options = {}) {
     const chosen = new Set(trimmed.map((row) => row.text))
     const total = list.length
     const candidates = []
-    for (let index = 0; index < total; index += 1) {
+    // Only recent-ish rows may be pulled back in. Scored across the whole session,
+    // one shared keyword was enough to drag a topic from an hour ago into the
+    // prompt — and the model then answered that old topic instead of this one.
+    const windowStart = Math.max(0, total - BACKFILL_WINDOW_EVENTS)
+    for (let index = windowStart; index < total; index += 1) {
       const event = list[index]
       if (event?.type !== 'user/message' && event?.type !== 'assistant/message') continue
       const text = event.type === 'user/message'
@@ -329,10 +341,13 @@ function sessionDigest(events) {
   }
   // Field order carries the weight: the newest messages first, the opening request
   // last, so a model that skims the JSON still starts from the current topic.
-  return {
-    latestUserMessages: users.slice(-3).map((text) => shortenTo(text, 100)),
-    openingRequest: shortenTo(users[0], 160),
+  const digest = { latestUserMessages: users.slice(-3).map((text) => shortenTo(text, 100)) }
+  // The opening request is the first thing said in the session — hours old in a long
+  // conversation, and a reliable way to drag the model back to the opening topic.
+  if (users.length <= DIGEST_OPENING_MAX_USER_MESSAGES) {
+    digest.openingRequest = shortenTo(users[0], 160)
   }
+  return digest
 }
 
 /** How the user actually writes: length, language, whether they open with greetings. */

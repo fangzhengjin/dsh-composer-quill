@@ -322,49 +322,52 @@ check('candidates are ranked by fit, not by model order', () => {
   assert.notEqual(ranked[0], '好的，我来看看这个问题的具体情况吧。', JSON.stringify(ranked))
 })
 
-check('a stale topic cannot outrank the current one', () => {
+check('a topic from an hour ago cannot be pulled back into the window', () => {
   const { transcriptOf } = host.__test
   const events = []
-  // Turns 1-6: an old topic that uses the same generic word twice.
+  // Turns 1-6: the old topic (an hour ago in a real session).
   for (let turn = 1; turn <= 6; turn += 1) {
-    events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第${turn}轮：给点建议吧，上次那个建议我还没用` }] } })
-    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第${turn}轮回答：建议可以先从最小改动开始。` }] } } })
+    events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第${turn}轮：改名之后旧链接会重定向吗，LINKCHECK` }] } })
+    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第${turn}轮回答：会重定向，GitHub 会保留 301。` }] } } })
   }
-  // Turns 7-30: the current topic, same generic word once.
+  // Turns 7-30: the current topic. Same length, no overlap with the old one.
   for (let turn = 7; turn <= 30; turn += 1) {
     events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第${turn}轮：继续改 composer-quill 的缓存键与回合计数` }] } })
     events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第${turn}轮回答：回合计数进键即可让旧结果失效。` }] } } })
   }
-  const context = transcriptOf(events, { rows: 10, chars: 3200, focus: '再给点建议' })
+  // A draft that happens to share wording with the old topic must not resurrect it.
+  const context = transcriptOf(events, { rows: 10, chars: 3200, focus: '再谈一下改名重定向' })
   const rows = JSON.parse(context)
-  const old = rows.filter((row) => /第[1-6]轮/.test(row.text))
+  const old = rows.filter((row) => row.text.includes('LINKCHECK'))
   const newest = rows.slice(-2).map((row) => row.text).join(' ')
-  assert.equal(rows.length, 10, 'the window stays full: ' + rows.length)
-  assert.ok(old.length <= 1, 'old topic rows in the window: ' + old.length)
+  assert.ok(rows.length <= 10, 'window stays bounded: ' + rows.length)
+  assert.equal(old.length, 0, 'an old topic must stay out of the prompt: ' + JSON.stringify(old))
   assert.ok(/第29轮|第30轮/.test(newest), 'the newest turns must be present: ' + newest.slice(0, 60))
 })
 
-check('a long session keeps the topic the draft is about', () => {
+check('a recent topic the draft mentions is still pulled in', () => {
   const { transcriptOf, sessionDigest } = host.__test
   const events = []
-  for (let turn = 1; turn <= 20; turn += 1) {
-    events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第${turn}轮：请帮我看一下 CSV 导出脚本的时区问题，编号 ${turn}` }] } })
-    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第${turn}轮回答：时区问题通常是 UTC 与本地时间混用导致的。` }] } } })
-  }
-  for (let turn = 21; turn <= 30; turn += 1) {
-    events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第${turn}轮：帮我看看这个前端报错怎么修，编号 ${turn}` }] } })
-    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第${turn}轮回答：前端问题通常和依赖版本有关。` }] } } })
+  for (let turn = 1; turn <= 30; turn += 1) {
+    // The CSV topic sits at turns 24-26: recent enough to earn a backfill slot.
+    const csv = turn >= 20 && turn <= 22
+    events.push({ type: 'user/message', data: { content: [{ type: 'text', text: `第${turn}轮：${csv ? '请帮我看一下 CSV 导出脚本的时区问题' : '帮我看看这个前端报错怎么修'}，编号 ${turn}` }] } })
+    events.push({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `第${turn}轮回答：${csv ? '时区问题通常是 UTC 与本地时间混用导致的。' : '前端问题通常和依赖版本有关。'} ` }] } } })
   }
   const draft = '再帮我看下 CSV 导出的时区'
   const plain = transcriptOf(events, { rows: 10, chars: 3200 })
   const focused = transcriptOf(events, { rows: 10, chars: 3200, focus: draft })
   assert.equal((plain.match(/CSV/g) ?? []).length, 0, 'without focus the topic is out of the window')
-  assert.ok((focused.match(/CSV/g) ?? []).length >= 1, 'focus must pull the topic back in')
+  assert.ok((focused.match(/CSV/g) ?? []).length >= 1, 'a recent topic must still be pulled in')
   assert.ok(focused.length <= 3400, `window grew too much: ${focused.length}`)
 
-  const digest = sessionDigest(events)
-  assert.ok(digest.openingRequest.includes('CSV'), JSON.stringify(digest))
-  assert.equal(digest.latestUserMessages.length, 3)
+  // The opening request is the oldest thing in the session: drop it once the
+  // conversation has moved on, keep it while it still describes the topic.
+  const longDigest = sessionDigest(events)
+  assert.equal(longDigest.openingRequest, undefined, JSON.stringify(longDigest))
+  assert.equal(longDigest.latestUserMessages.length, 3)
+  const shortDigest = sessionDigest(events.slice(-16))
+  assert.ok(shortDigest.openingRequest !== undefined, 'a short session keeps its opening request')
 })
 
 check('the diagnostic log rotates once it grows', () => {
@@ -1375,3 +1378,4 @@ for (const off of disposers) off()
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)
 process.exit(failures === 0 ? 0 : 1)
+
