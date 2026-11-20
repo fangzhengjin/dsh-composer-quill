@@ -4,6 +4,14 @@
 
 ## 0.31.x
 
+### 0.31.20
+安全修复，两条都是代码审查时发现的，不是运行中出的事故：
+
+- **`/predict` 的免 token 分支可以被 DNS rebinding 利用**：`authorized()` 除了 token 还给了一条「证明自己是同源浏览器」的头校验。这条路挡得住普通的跨站请求，但挡不住 rebinding——被 rebind 的页面自己就是同源，`sec-fetch-site: same-origin` 与自定义头都能带上。现在这条分支额外要求 `Host` 是 `127.x` / `localhost` / `[::1]`；rebinding 后 `Host` 仍然是攻击者的域名，因此被拦下。带 token 的请求不受影响。
+- **摘要路径没有遮蔽**：`transcriptOf` 的行过了 `maskSecrets`，但 `sessionDigest`（最近三条用户消息、开场请求）和 `lastAssistantText` 是原样拼进 prompt 的。用户最近粘过的 `sk-…` 会明文发给模型。现在这两处也过遮蔽。
+- 单测 67 → 72：新增 5 项，覆盖 rebinding 的 Host 拦截、loopback 放行、`isLoopbackHost` 的四种写法，以及两处遮蔽。
+
+
 ### 0.31.19
 灰字从「body 上的浮层」改成「输入框内部的一层」，并顺带修掉随之暴露的排版问题：
 
@@ -399,3 +407,4 @@ README 面向公开读者补齐：
 ## 0.5.x
 ### 0.5.3 — 尾随换行草稿的前缀比较；空行灰字锚定（`<br>` 边界、`fromBlock`）
 ### 0.5.2 — 行盒对齐修正（`round((lineHeight - glyphHeight)/3)`）
+

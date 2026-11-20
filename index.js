@@ -348,11 +348,11 @@ function sessionDigest(events) {
   }
   // Field order carries the weight: the newest messages first, the opening request
   // last, so a model that skims the JSON still starts from the current topic.
-  const digest = { latestUserMessages: users.slice(-3).map((text) => shortenTo(text, 100)) }
+  const digest = { latestUserMessages: users.slice(-3).map((text) => shortenTo(maskSecrets(text), 100)) }
   // The opening request is the first thing said in the session — hours old in a long
   // conversation, and a reliable way to drag the model back to the opening topic.
   if (users.length <= DIGEST_OPENING_MAX_USER_MESSAGES) {
-    digest.openingRequest = shortenTo(users[0], 160)
+    digest.openingRequest = shortenTo(maskSecrets(users[0]), 160)
   }
   return digest
 }
@@ -552,7 +552,8 @@ function lastAssistantText(events) {
     const event = events[index]
     if (event?.type !== 'assistant/message') continue
     const text = textOfBlocks(event.data?.message?.content ?? event.data?.content)
-    if (text.trim() !== '') return text.trim()
+    // A reply can quote whatever the user pasted, so it leaves with the same veil.
+      if (text.trim() !== '') return maskSecrets(text.trim())
   }
   return ''
 }
@@ -1562,6 +1563,18 @@ function respond(res, statusCode, payload) {
   res.end(JSON.stringify(payload))
 }
 
+/** True when the request's Host header names this machine. */
+function isLoopbackHost(value) {
+  if (typeof value !== 'string' || value === '') return false
+    // Bracketed IPv6 keeps its colons; stripping the port there would eat the 1.
+    if (value.startsWith('[')) {
+      const end = value.indexOf(']')
+      return end > 0 && value.slice(1, end) === '::1'
+    }
+    const host = value.replace(/:\d+$/, '')
+  return host === 'localhost' || host === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+}
+
 /**
  * Accept a request when it carries the per-start token, or when it proves a
  * same-origin browser context: `sec-fetch-*` headers are set by the browser and
@@ -1571,6 +1584,12 @@ function respond(res, statusCode, payload) {
  */
 function authorized(req, token) {
   if (req.headers[TOKEN_HEADER] === token) return true
+  // The header path exists for an index page served without the token row. It is
+  // only safe on a loopback host: a DNS-rebound page keeps its own Host name, so a
+  // loopback Host check closes the rebinding hole the header check left open.
+  // A real browser always sends Host; only reject a Host that names another site,
+  // which is exactly what a DNS-rebound page keeps.
+  if (req.headers.host !== undefined && !isLoopbackHost(req.headers.host)) return false
   const site = req.headers['sec-fetch-site']
   const mode = req.headers['sec-fetch-mode']
   const contentType = req.headers['content-type'] ?? ''
@@ -1833,7 +1852,8 @@ export function apply(ctx) {
 }
 
 /** Pure helpers exposed for the offline smoke test. */
-export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized }
+export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText }
+
 
 
 

@@ -1560,6 +1560,62 @@ if (listOnly) process.exit(0)
 
 const elapsed = slow.reduce((total, entry) => total + entry.ms, 0)
 const worst = [...slow].sort((left, right) => right.ms - left.ms).slice(0, 3)
+
+group('host: security')
+
+{
+  const api = host.__test
+  const req = (headers) => ({ headers })
+
+  check('a rebound Host cannot ride the header path', () => {
+    assert.equal(
+      api.authorized(req({
+        host: 'evil.example:58537',
+        'sec-fetch-site': 'same-origin',
+        'x-composer-quill-client': '1',
+        'content-type': 'application/json',
+      }), 'the-real-token'),
+      false,
+    )
+  })
+
+  check('a loopback page still may', () => {
+    assert.equal(
+      api.authorized(req({
+        host: '127.0.0.1:58537',
+        'sec-fetch-site': 'same-origin',
+        'x-composer-quill-client': '1',
+        'content-type': 'application/json',
+      }), 'the-real-token'),
+      true,
+    )
+  })
+
+  check('isLoopbackHost knows the loopback spellings', () => {
+    for (const value of ['127.0.0.1:1', 'localhost:58537', '[::1]:58537', 'localhost']) {
+      assert.equal(api.isLoopbackHost(value), true, value)
+    }
+    for (const value of ['evil.example', '10.0.0.5:80', '']) {
+      assert.equal(api.isLoopbackHost(value), false, value)
+    }
+  })
+
+  check('the session digest leaves with secrets masked', () => {
+    const digest = api.sessionDigest([
+      { type: 'user/message', data: { content: [{ type: 'text', text: '我的 key 是 sk-abcdef1234567890' }] } },
+    ])
+    assert.equal(digest.latestUserMessages[0].includes('sk-abcdef'), false)
+    assert.equal(digest.latestUserMessages[0].includes('[redacted'), true)
+  })
+
+  check('the last assistant reply leaves masked too', () => {
+    const text = api.lastAssistantText([
+      { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: `你贴的 ghp_${'a'.repeat(36)} 要撤销` }] } } },
+    ])
+    assert.equal(text.includes('ghp_abcdefghij'), false)
+  })
+}
+
 const summary = [
   '',
   `${passed} passed`,
