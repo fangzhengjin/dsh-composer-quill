@@ -1938,6 +1938,75 @@ group('client: error-first')
 }
 
 
+group('client: gates')
+
+{
+  const api = globalThis.__ghostFactory.factory((name) => {
+    if (name === 'react') return fakeReact
+    throw new Error(`unexpected require(${name})`)
+  }).__test
+
+  const live = (over) => ({ enabled: true, sessionId: 's1', running: false, draftEmpty: false, draft: '帮我把这段日志', ...over })
+  const base = (over) => ({ mode: 'compose', forDraft: '帮我把这段日志', now: 10_000, live: live({}), ...over })
+  const gate = (input) => api.gateFor(input).gate
+  const effects = (input) => api.gateFor(input).effects.map((item) => item.type)
+
+  check('the gate order is fixed', () => {
+    // Each input satisfies exactly one gate, so the reported gate is the first hit.
+    assert.equal(gate(base({ live: live({ enabled: false }) })), 'G1')
+    assert.equal(gate(base({ live: live({ sessionId: null }) })), 'G1')
+    assert.equal(gate(base({ blockedUntil: 20_000 })), 'G2')
+    assert.equal(gate(base({ served: { key: 'compose|帮我把这段日志', at: 9_000 } })), 'G3')
+    assert.equal(gate(base({ lastCall: { key: 'compose|帮我把这段日志', at: 9_500 } })), 'G4a')
+    assert.equal(gate(base({ stored: { sessionId: 's1', kind: 'compose', forDraft: '帮我把这段日志', phase: 'ready' } })), 'G4b')
+    assert.equal(gate(base({ live: live({ running: true }) })), 'G5a')
+    assert.equal(gate(base({ forDraft: '  ', live: live({ draft: '  ' }) })), 'G5b')
+    assert.equal(gate(base({ dismissed: '帮我把这段日志' })), 'G5c')
+    assert.equal(gate(base({ stored: { sessionId: 's1', kind: 'compose', forDraft: '我把这段', phase: 'loading', requested: '帮我把这段' } })), 'G6')
+    assert.equal(gate(base({})), 'G7')
+  })
+
+  check('a stopped request still claims its 900ms slot', () => {
+    // G5a/G5b/G5c come after the dedupe bookkeeping in request(): the call is claimed.
+    assert.deepEqual(effects(base({ live: live({ running: true }) })), ['mark-last-call'])
+    assert.deepEqual(effects(base({ dismissed: '帮我把这段日志' })), ['mark-last-call'])
+    // force skips that bookkeeping entirely.
+    assert.deepEqual(effects(base({ force: true, live: live({ running: true }) })), [])
+  })
+
+  check('the reuse gates report why they reused', () => {
+    assert.deepEqual(effects(base({ served: { key: 'compose|帮我把这段日志', at: 9_000 } })), ['report'])
+    assert.deepEqual(
+      effects(base({ stored: { sessionId: 's1', kind: 'compose', forDraft: '帮我把这段日志', phase: 'empty' } })),
+      ['report', 'mark-last-call'],
+    )
+    assert.deepEqual(
+      effects(base({ stored: { sessionId: 's1', kind: 'compose', forDraft: '我把这段', phase: 'loading', requested: '帮我把这段' } })),
+      ['mark-last-call', 'report'],
+    )
+  })
+
+  check('the dedupe gate asks to be rescheduled, not dropped', () => {
+    const verdict = api.gateFor(base({ lastCall: { key: 'compose|帮我把这段日志', at: 9_700 } }))
+    assert.equal(verdict.gate, 'G4a')
+    assert.equal(verdict.effects[1].type, 'reschedule')
+    assert.equal(verdict.effects[1].wait, 600)
+  })
+
+  check('next and compose disagree about an empty composer', () => {
+    // One space: compose wants nothing, next still counts as empty.
+    const space = { live: live({ draft: ' ', draftEmpty: false }), forDraft: '', mode: 'next' }
+    assert.equal(gate(space), 'G5ad')
+    const empty = { live: live({ draft: '', draftEmpty: true }), forDraft: '', mode: 'next' }
+    assert.equal(gate(empty), 'G7')
+    // An empty forDraft falls back to the composer for compose.
+    const fallback = api.gateFor(base({ forDraft: '' }))
+    assert.equal(fallback.draftNow, '帮我把这段日志')
+    assert.equal(fallback.key, 'compose|帮我把这段日志')
+  })
+}
+
+
 const summary = [
   '',
   `${passed} passed`,

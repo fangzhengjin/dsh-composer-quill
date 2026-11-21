@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.32'
+    const BUILD = '0.31.33'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -54,6 +54,10 @@ const COVERED_DEBOUNCE_MS = 1200
     const RETRIGGER_INTERVAL_MS = 1500
     const MIN_DRAFT_CHARS = 1
     const CLIENT_TIMEOUT_MS = 20000
+    /** A stored answer older than this is not worth reusing. */
+    const SERVED_TTL_MS = 5000
+    /** Two triggers for the same draft inside this window share one call. */
+    const DEDUPE_MS = 900
 
     const zh = {
       'hint.accept': '按 Tab 采纳',
@@ -257,6 +261,71 @@ const COVERED_DEBOUNCE_MS = 1200
     const IDLE = Object.freeze({
       sessionId: null, phase: 'idle', kind: 'next', items: [], index: 0, error: null, forDraft: '', requested: null,
     })
+
+    /**
+     * Which gate stops this request, and what to do about it. Pure: every input is
+     * passed in, so the ORDER of the decisions is testable without React, timers or a
+     * network. Mirrors request() exactly — see docs/REQUEST_STATE_MACHINE.md.
+     */
+    function gateFor(input) {
+      const live = input?.live ?? {}
+      const mode = input?.mode === 'next' ? 'next' : 'compose'
+      const now = Number.isFinite(input?.now) ? input.now : Date.now()
+      const force = input?.force === true
+      // "||" not "??": an empty forDraft means "use whatever is in the composer now".
+      const draftNow = mode === 'next' ? '' : (input?.forDraft || live.draft || '')
+      const key = mode + "|" + draftNow
+      const effects = []
+      const stop = (gate) => ({ verdict: 'stop', gate, draftNow, key, effects })
+      const send = (gate) => ({ verdict: 'send', gate, draftNow, key, effects })
+
+      if (!live.enabled || live.sessionId === null) return stop('G1')
+      if (now < (input?.blockedUntil ?? 0)) return stop('G2')
+
+      const served = input?.served ?? { key: '', at: 0 }
+      if (served.key === key && now - served.at < SERVED_TTL_MS) {
+        effects.push({ type: 'report', name: 'reuse', detail: 'store' })
+        return stop('G3')
+      }
+
+      if (!force) {
+        const lastCall = input?.lastCall ?? { key: '', at: 0 }
+        if (lastCall.key === key && now - lastCall.at < DEDUPE_MS) {
+          effects.push({ type: 'report', name: 'dedupe', detail: mode })
+          effects.push({ type: 'reschedule', wait: Math.max(80, DEDUPE_MS - (now - lastCall.at)) })
+          return stop('G4a')
+        }
+        const stored = input?.stored ?? null
+        if (mode === 'compose'
+          && stored !== null
+          && stored.sessionId === live.sessionId
+          && stored.kind === 'compose'
+          && stored.forDraft === draftNow
+          && (stored.phase === 'ready' || stored.phase === 'empty')) {
+          effects.push({ type: 'report', name: 'reuse', detail: stored.phase })
+          effects.push({ type: 'mark-last-call' })
+          return stop('G4b')
+        }
+        // Passed the dedupe: the call is claimed even if a later gate stops it —
+        // request() writes lastCall before the running/short/dismissed checks.
+        effects.push({ type: 'mark-last-call' })
+      }
+
+      if (mode === 'next') {
+        if (live.running === true || live.draftEmpty !== true) return stop('G5ad')
+      } else {
+        if (live.running === true) return stop('G5a')
+        if (draftNow.trim().length < MIN_DRAFT_CHARS) return stop('G5b')
+        if (input?.dismissed != null && input.dismissed === draftNow) return stop('G5c')
+        const stored = input?.stored ?? null
+        if (stored !== null && stored.phase === 'loading' && inFlightCovers(stored.requested, draftNow)) {
+          effects.push({ type: 'report', name: 'reuse', detail: 'in-flight' })
+          return stop('G6')
+        }
+      }
+
+      return send('G7')
+    }
 
     /**
      * What the dock remembers about the draft in the composer. Pure, so the one-shot
@@ -1629,55 +1698,52 @@ const COVERED_DEBOUNCE_MS = 1200
         timer.current = setTimeout(() => {
           timer.current = null
           const live = latest.current
-          if (!live.enabled || live.sessionId === null) return
-          if (liveBlocked()) return
-          const draftNow = mode === 'next' ? '' : (forDraft || live.draft)
-            {
-              // A stored result for this exact key was just shown: reuse it instead
-              // of paying for a sample that cannot differ.
-              const served = servedFromStore.current
-              const serveKey = `${mode}|${draftNow}`
-              if (served.key === serveKey && Date.now() - served.at < 5000) {
-                report('reuse', { sessionId: live.sessionId, draftLength: draftNow.length, detail: 'store' })
-                return
-              }
+          // One snapshot, read once: the gates below share it, exactly as the
+          // hand-written chain did (two reads could disagree mid-flight).
+          const stored = ghost.getSnapshot()
+          const now = Date.now()
+          const verdict = gateFor({
+            mode,
+            forDraft,
+            force,
+            now,
+            live: {
+              enabled: live.enabled,
+              sessionId: live.sessionId,
+              running: live.running,
+              draftEmpty: live.draftEmpty,
+              draft: live.draft,
+            },
+            blockedUntil: notLive.current.until,
+            served: servedFromStore.current,
+            lastCall: lastCall.current,
+            stored: {
+              sessionId: stored.sessionId,
+              kind: stored.kind,
+              forDraft: stored.forDraft,
+              phase: stored.phase,
+              requested: stored.requested,
+            },
+            dismissed: dismissedDraft.current,
+          })
+          const draftNow = verdict.draftNow
+          for (const effect of verdict.effects) {
+            if (effect.type === 'report') {
+              report(effect.name, { sessionId: live.sessionId, draftLength: draftNow.length, detail: effect.detail })
+              continue
             }
-          if (!force) {
-            const key = `${mode}|${draftNow}`
-            const now = Date.now()
-            if (lastCall.current.key === key && now - lastCall.current.at < 900) {
-              const wait = Math.max(80, 900 - (now - lastCall.current.at))
-              report('dedupe', { sessionId: live.sessionId, draftLength: draftNow.length, detail: mode })
+            if (effect.type === 'mark-last-call') {
+              lastCall.current = { key: verdict.key, at: now }
+              continue
+            }
+            if (effect.type === 'reschedule') {
               timer.current = setTimeout(() => {
                 timer.current = null
                 request(mode, forDraft, force)
-              }, wait)
-              return
-            }
-            const stored = ghost.getSnapshot()
-            if (mode === 'compose'
-              && stored.sessionId === live.sessionId
-              && stored.kind === 'compose'
-              && stored.forDraft === draftNow
-              && (stored.phase === 'ready' || stored.phase === 'empty')) {
-              report('reuse', { sessionId: live.sessionId, draftLength: draftNow.length, detail: stored.phase })
-              lastCall.current = { key, at: now }
-              return
-            }
-            lastCall.current = { key, at: now }
-          }
-          if (mode === 'next' && (live.running || !live.draftEmpty)) return
-          if (mode === 'compose') {
-            if (live.running || draftNow.trim().length < MIN_DRAFT_CHARS) return
-            if (dismissedDraft.current === draftNow) return
-            // The draft only grew since the in-flight request started: its tail
-            // still applies, so keep streaming it instead of cancelling.
-            const inFlight = ghost.getSnapshot()
-            if (inFlight.phase === 'loading' && inFlightCovers(inFlight.requested, draftNow)) {
-              report('reuse', { sessionId: live.sessionId, draftLength: draftNow.length, detail: 'in-flight' })
-              return
+              }, effect.wait)
             }
           }
+          if (verdict.verdict !== 'send') return
           const kind = mode === 'next' ? 'next' : 'compose'
 
           // Compose streams: deltas land as they arrive and are repainted once
@@ -2606,6 +2672,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
