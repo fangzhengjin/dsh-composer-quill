@@ -4,6 +4,20 @@
 
 ## 0.31.x
 
+### 0.31.31
+拆 `GhostDock` 的第一步：把它的「草稿记账」收进一个纯 reducer。
+
+组件的 25 个 `useRef` 里有一半是同一类东西——**对同一份草稿只做一次**的闸门：「这条已经画过了」「这条已经覆盖过」「用户在这里打过字」。它们散在 36 处读写，每次改动都得先确认别处的假设。现在有了 `createDockBooking()` 与 `dockReducer()`：状态是 `{ painted, covered, hadDraft }`，动作是 `painted / covered / not-covered / typed / cleared`，同值不动对象（`return booking`），可单测。
+
+这一轮迁移了三个闸门（`paintedKey`、`lastCovered`、`hadDraft`），请求相关的四个（`lastRequested`、`retriedFor`、`dismissedDraft`、`switchDraft`）下一轮再动——它们和重试预算、会话切换的 effect 缠在一起，一次改完风险太高。
+
+两个真实发现：
+
+- **ref 必须跟着 dispatch 走**：第一版只在渲染时同步 `current.current`，结果画灰字的 effect 在 dispatch 之后立刻读，读到旧值，同一条建议多上报了一次（S32 从 4 次变 5 次）。现在 dispatch 里同步更新 ref
+- **假 React 缺 `useReducer`**：单测用的 fake React 只实现了 `useState`/`useRef`/`useEffect`，一加 reducer 就有 5 条用例报「不是函数」。补上之后才跑得动
+
+单测 94 → 99（5 项 booking 断言），场景 39/39 不变。
+
 ### 0.31.30
 E 组延后的两条。
 

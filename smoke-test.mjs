@@ -560,6 +560,16 @@ const fakeReact = {
   useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
   useState: (initial) => [initial, () => {}],
   useRef: (value) => ({ current: value }),
+  // Enough of a reducer for one render: state from init(), and a dispatch that
+  // applies the action to the same cell the component reads back.
+  useReducer: (reducer, initialArg, init) => {
+    const cell = { value: typeof init === 'function' ? init(initialArg) : initialArg }
+    const dispatch = (action) => {
+      cell.value = reducer(cell.value, action)
+      return cell.value
+    }
+    return [cell.value, dispatch]
+  },
   useCallback: (fn) => fn,
   useEffect: (fn) => { effectQueue.push(fn) },
 }
@@ -1850,6 +1860,45 @@ group('client: a11y')
     assert.equal(api.describeAnnouncement({ t, status: '', failure: '', busy: true }), '补写中…')
     assert.equal(api.describeAnnouncement({ t, status: '有建议', failure: '', busy: true }), '建议：有建议')
     assert.equal(api.describeAnnouncement({ t, status: '', failure: '', busy: false }), '')
+  })
+}
+
+
+group('client: booking')
+
+{
+  const api = globalThis.__ghostFactory.factory((name) => {
+    if (name === 'react') return fakeReact
+    throw new Error(`unexpected require(${name})`)
+  }).__test
+
+  check('a new booking remembers nothing', () => {
+    assert.deepEqual(api.createDockBooking(), { painted: '', covered: '', hadDraft: false })
+  })
+
+  check('the same fact twice keeps the same object', () => {
+    const first = api.dockReducer(api.createDockBooking(), { type: 'painted', key: 'a|b' })
+    assert.equal(first.painted, 'a|b')
+    assert.equal(api.dockReducer(first, { type: 'painted', key: 'a|b' }), first)
+  })
+
+  check('covered clears when the suggestion no longer covers the draft', () => {
+    const covered = api.dockReducer(api.createDockBooking(), { type: 'covered', draft: '草稿' })
+    assert.equal(covered.covered, '草稿')
+    assert.equal(api.dockReducer(covered, { type: 'not-covered' }).covered, '')
+  })
+
+  check('typing and clearing flip the same flag once', () => {
+    const typed = api.dockReducer(api.createDockBooking(), { type: 'typed' })
+    assert.equal(typed.hadDraft, true)
+    assert.equal(api.dockReducer(typed, { type: 'typed' }), typed)
+    assert.equal(api.dockReducer(typed, { type: 'cleared' }).hadDraft, false)
+  })
+
+  check('an unknown action is a no-op', () => {
+    const booking = api.createDockBooking()
+    assert.equal(api.dockReducer(booking, { type: 'nope' }), booking)
+    assert.equal(api.dockReducer(booking, undefined), booking)
   })
 }
 

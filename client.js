@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.30'
+    const BUILD = '0.31.31'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -257,6 +257,32 @@ const COVERED_DEBOUNCE_MS = 1200
     const IDLE = Object.freeze({
       sessionId: null, phase: 'idle', kind: 'next', items: [], index: 0, error: null, forDraft: '', requested: null,
     })
+
+    /**
+     * What the dock remembers about the draft in the composer. Pure, so the one-shot
+     * guards ("already painted", "already covered", "has typed here") can be tested
+     * without React.
+     */
+    function createDockBooking() {
+      return { painted: '', covered: '', hadDraft: false }
+    }
+
+    function dockReducer(booking, action) {
+      switch (action?.type) {
+        case 'painted':
+          return booking.painted === action.key ? booking : { ...booking, painted: action.key }
+        case 'covered':
+          return booking.covered === action.draft ? booking : { ...booking, covered: action.draft }
+        case 'not-covered':
+          return booking.covered === '' ? booking : { ...booking, covered: '' }
+        case 'typed':
+          return booking.hadDraft ? booking : { ...booking, hadDraft: true }
+        case 'cleared':
+          return booking.hadDraft ? { ...booking, hadDraft: false } : booking
+        default:
+          return booking
+      }
+    }
 
     /**
      * What a screen reader should hear. Pure, so the transitions are testable:
@@ -1407,6 +1433,20 @@ const COVERED_DEBOUNCE_MS = 1200
         }, t(running ? 'hint.busy' : 'hint.keys'))
       }
 
+    /** The dock's booking, kept in a ref: it drives effects, not layout. */
+    function useDockBooking() {
+      const [booking, send] = React.useReducer(dockReducer, undefined, createDockBooking)
+      const current = React.useRef(booking)
+      current.current = booking
+      // Apply locally as well: a caller reads the booking immediately after sending,
+      // and the next render is too late for that.
+      const dispatch = React.useCallback((action) => {
+        current.current = dockReducer(current.current, action)
+        send(action)
+      }, [send])
+      return { booking: current, send: dispatch }
+    }
+
     function GhostDock(props) {
       const { session, input, inputActions, t } = props
       const ghost = props.ghost ?? idleGhost()
@@ -1454,10 +1494,9 @@ const COVERED_DEBOUNCE_MS = 1200
       const dismissedDraft = React.useRef(null)
       const switchDraft = React.useRef(null)
       const beaconSent = React.useRef(false)
-      const paintedKey = React.useRef('')
       const lastRequested = React.useRef(null)
       const retriedFor = React.useRef(null)
-      const hadDraft = React.useRef(false)
+      const { booking: dockBooking, send: sendDock } = useDockBooking()
       const latest = React.useRef({})
       latest.current = { sessionId, running, enabled, draft, draftEmpty, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
       const layer = React.useRef(null)
@@ -1581,7 +1620,6 @@ const COVERED_DEBOUNCE_MS = 1200
       const lastCall = React.useRef({ key: '', at: 0 })
         // Set when the store answered: nothing may be re-sampled for that key.
         const servedFromStore = React.useRef({ key: '', at: 0 })
-      const lastCovered = React.useRef('')
       const learnedShown = React.useRef(null)
       const request = React.useCallback((mode, forDraft, force = false, delayOverride = null) => {
         stopTimer()
@@ -1793,7 +1831,7 @@ const COVERED_DEBOUNCE_MS = 1200
           // Session must not silence this one.
           retriedFor.current = null
           notLive.current = { until: 0, attempts: 0, timer: notLive.current.timer }
-          hadDraft.current = false
+          sendDock({ type: 'cleared' })
           // The composer still carries the previous Session's draft until the
           // host swaps it: never ask for a proposal on someone else's text.
           switchDraft.current = latest.current.draft
@@ -1843,14 +1881,14 @@ const COVERED_DEBOUNCE_MS = 1200
 
       // Typing drives the compose request (debounced on the settled draft).
       React.useEffect(() => {
-        if (draft.trim() !== '') hadDraft.current = true
+        if (draft.trim() !== '') sendDock({ type: 'typed' })
         if (!enabled || sessionId === null || running || settings.mode === 'manual') return
         if (draft.trim().length < MIN_DRAFT_CHARS) {
           if (state.kind === 'compose') ghost.clear(sessionId)
           // Clearing the composer (after accepting, or by hand) must re-arm the
           // next-message prediction instead of leaving the composer silent.
-          if (draft === '' && hadDraft.current) {
-            hadDraft.current = false
+          if (draft === '' && dockBooking.current.hadDraft) {
+            sendDock({ type: 'cleared' })
             dismissedDraft.current = null
             lastRequested.current = null
             // Drop the accepted proposal before asking for a fresh prediction.
@@ -1894,11 +1932,11 @@ const COVERED_DEBOUNCE_MS = 1200
           && stored.forDraft !== draft
           && draft.replace(/\s+$/, '').startsWith(stored.forDraft.replace(/\s+$/, ''))
           && followRemainder(storedText, draft.replace(/\s+$/, '')) !== ''
-        if (covered && lastCovered.current !== draft) {
-          lastCovered.current = draft
+        if (covered && dockBooking.current.covered !== draft) {
+          sendDock({ type: 'covered', draft })
           report('covered', { sessionId, draftLength: draft.length, detail: 'prefix-extension' })
         }
-        if (!covered) lastCovered.current = ''
+        if (!covered) sendDock({ type: 'not-covered' })
         // A stored answer for this exact draft is better than a fresh call.
         if (hydrateStored('compose', draft)) return
         request('compose', draft, false, covered ? COVERED_DEBOUNCE_MS : undefined)
@@ -2142,8 +2180,8 @@ const COVERED_DEBOUNCE_MS = 1200
           // Structural only: the proposal text changes on every streamed delta.
           // Keying on the text meant one POST and one log line per frame.
           const paintKey = `${data.kind}|${data.forDraft}|${anchor}`
-          if (paintedKey.current !== paintKey) {
-            paintedKey.current = paintKey
+          if (dockBooking.current.painted !== paintKey) {
+            sendDock({ type: 'painted', key: paintKey })
             report('paint', {
               sessionId: data.sessionId,
               draftLength: data.draftLength,
@@ -2565,6 +2603,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

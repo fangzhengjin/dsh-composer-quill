@@ -1,0 +1,12 @@
+feat(client): collect the dock's per-draft guards into one reducer
+
+拆 GhostDock 的第一步。
+
+- 新增 createDockBooking() / dockReducer()：{ painted, covered, hadDraft } 与
+  painted / covered / not-covered / typed / cleared 五个动作，同值不动对象
+- 迁移三个闸门（paintedKey / lastCovered / hadDraft）；请求相关的四个
+  （lastRequested / retriedFor / dismissedDraft / switchDraft）下一轮再动
+- 两个真实发现：dispatch 必须同步更新 ref（否则画灰字的 effect 读到旧值，
+  多上报一次，S32 抓到）；单测的 fake React 缺 useReducer，补上才跑得动
+
+单测 94 → 99，场景 39/39。版本 0.31.31。
