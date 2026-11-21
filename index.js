@@ -320,13 +320,17 @@ function transcriptOf(events, options = {}) {
       candidates.push({ text, score, index, role: event.type === 'user/message' ? 'user' : 'assistant' })
     }
     candidates.sort((left, right) => right.score - left.score)
-    let size = JSON.stringify(trimmed).length
+    let mergedSize = JSON.stringify(trimmed.map((entry) => entry.value)).length
     for (const candidate of candidates) {
       if (trimmed.length >= maxRows) break
-      if (size + candidate.text.length + 40 > maxChars) continue
-      chosen.add(candidate.text)
-      trimmed.push({ value: row(candidate.role, candidate.text), index: candidate.index })
-      size += candidate.text.length + 40
+      const normalized = row(candidate.role, candidate.text)
+      // Compare against the form that is actually shown: the old check used the raw
+      // text while the set held shortened, masked rows.
+      if (chosen.has(normalized.text)) continue
+      if (mergedSize + normalized.text.length + 40 > maxChars) continue
+      chosen.add(normalized.text)
+      trimmed.push({ value: normalized, index: candidate.index })
+      mergedSize += normalized.text.length + 40
     }
     // Event order, always: appending a backfilled row would present an old topic as the
     // newest message, which is the failure this window exists to prevent.
@@ -1625,6 +1629,27 @@ function isLoopbackHost(value) {
  * CORS preflight from any other origin. This keeps the routes usable when the
  * page is served without the token row (static or shell-rendered index).
  */
+/**
+ * Method and auth for every route, so the three handlers cannot drift apart again —
+ * one of them had already lost its cleanup before.
+ */
+function preflight(req, res, token, options) {
+  const tokenOnly = options?.tokenOnly === true
+  const label = typeof options?.label === 'string' ? options.label : 'route'
+  if (req.method !== 'POST') {
+    res.setHeader('allow', 'POST')
+    respond(res, 405, { error: { code: 'method-not-allowed', message: 'POST is required' } })
+    return false
+  }
+  const allowed = tokenOnly ? req.headers[TOKEN_HEADER] === token : authorized(req, token)
+  if (!allowed) {
+    trace(`${label}-unauthorized`, { site: req.headers['sec-fetch-site'] ?? null })
+    respond(res, 401, { error: { code: 'unauthorized', message: 'route token is missing or stale' } })
+    return false
+  }
+  return true
+}
+
 function authorized(req, token) {
   if (req.headers[TOKEN_HEADER] === token) return true
   // The header path exists for an index page served without the token row. It is
@@ -1647,16 +1672,7 @@ function authorized(req, token) {
 }
 
 async function handlePredict(ctx, token, req, res) {
-  if (req.method !== 'POST') {
-    res.setHeader('allow', 'POST')
-    respond(res, 405, { error: { code: 'method-not-allowed', message: 'POST is required' } })
-    return
-  }
-  if (!authorized(req, token)) {
-    trace('predict-unauthorized', { site: req.headers['sec-fetch-site'] ?? null })
-    respond(res, 401, { error: { code: 'unauthorized', message: 'route token is missing or stale' } })
-    return
-  }
+  if (!preflight(req, res, token, { label: 'predict' })) return
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(httpError('prediction timed out', 504)), REQUEST_TIMEOUT_MS)
   timeout.unref?.()
@@ -1747,17 +1763,8 @@ function historyOf(events, limit = 200) {
 
 /** Serve `POST /composer-quill/history`: the user's own past messages, no model. */
 async function handleHistory(ctx, token, req, res) {
-  if (req.method !== 'POST') {
-    res.setHeader('allow', 'POST')
-    respond(res, 405, { error: { code: 'method-not-allowed', message: 'POST is required' } })
-    return
-  }
   // Session history is the user's own text: no header-only shortcut here.
-  if (req.headers[TOKEN_HEADER] !== token) {
-    trace('history-unauthorized', { site: req.headers['sec-fetch-site'] ?? null })
-    respond(res, 401, { error: { code: 'unauthorized', message: 'route token is missing or stale' } })
-    return
-  }
+  if (!preflight(req, res, token, { tokenOnly: true, label: 'history' })) return
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(httpError('history read timed out', 504)), REQUEST_TIMEOUT_MS)
   timeout.unref?.()
@@ -1798,16 +1805,7 @@ async function handleHistory(ctx, token, req, res) {
 
 /** Diagnostic sink so a silent browser half leaves a trace on disk. */
 async function handleBeacon(token, req, res) {
-  if (req.method !== 'POST') {
-    res.setHeader('allow', 'POST')
-    respond(res, 405, { error: { code: 'method-not-allowed', message: 'POST is required' } })
-    return
-  }
-  if (!authorized(req, token)) {
-    trace('beacon-unauthorized', { site: req.headers['sec-fetch-site'] ?? null })
-    respond(res, 401, { error: { code: 'unauthorized', message: 'route token is missing or stale' } })
-    return
-  }
+  if (!preflight(req, res, token, { label: 'beacon' })) return
   const controller = new AbortController()
   // A slow upload must not leave this handler pending until the server's own
   // request timeout fires.
@@ -1904,7 +1902,7 @@ export function apply(ctx) {
 }
 
 /** Pure helpers exposed for the offline smoke test. */
-export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY }
+export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
 
 
 

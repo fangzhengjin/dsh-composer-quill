@@ -1,0 +1,16 @@
+refactor: one preflight for all three routes
+
+E 组（范围已收窄，见下）：
+
+- method+auth 抽成 preflight()：这段样板在三个 handler 里各写一遍，代价是真实发生过的
+  ——beacon 那次漏了 finally（0.31.25 修的）。/history 的「只认 token」作为参数保留
+- transcriptOf 的去重口径统一：chosen 存的是 row() 处理后的文本，回填却拿原始文本比，
+  同一行可能以两种形态重复
+- 内层 size 改名 mergedSize（与外层字节预算同名）
+- 客户端文件头改回事实：不再是 position:fixed 挂在 body 上
+- 删掉 86 行尾部空行（2604 → 2518）
+
+没做的两条，理由写在 CHANGELOG：callRoute/streamRoute 的请求头合并（收益小于回归面）、
+拆 GhostDock 与 produceCompose/computePrediction（大手术，需单独一轮）。
+
+单测 87 → 91，场景 36/36。版本 0.31.28。

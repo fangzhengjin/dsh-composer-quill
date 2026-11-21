@@ -4,6 +4,22 @@
 
 ## 0.31.x
 
+### 0.31.28
+E 组：结构，不改行为。
+
+- **三个路由的 method+auth 抽成 `preflight()`**：同一段样板在 `handlePredict` / `handleHistory` / `handleBeacon` 里各写一遍，代价是真实发生过的——beacon 那次漏了 `finally`（0.31.25 修的）。现在一次写对，`/history` 的「只认 token」作为参数保留，各自的 trace 标签不变
+- **`transcriptOf` 的去重口径统一**：`chosen` 里存的是 `row()` 处理后的文本（缩短、遮蔽），回填候选却拿原始文本去比，同一行可能重复进两个形态。现在先归一化再比较
+- **内层 `size` 改名 `mergedSize`**：它与外层「字节预算」的 `size` 同名，读代码时容易看串
+- **客户端文件头注释改成事实**：还写着「`position: fixed` 层挂在 body 上」，而实际早在 0.31.19 就改成嵌在输入框内的绝对定位层
+- **删掉 86 行尾部空行**（`client.js` 2604 → 2518 行）
+
+原本计划里的两条**没有做**，理由记在这里：
+
+- **`callRoute` / `streamRoute` 的请求头合并**：两处各 5 行，差异只有 `accept`；改动收益小于它带来的回归面（这两条是全部网络路径的入口）
+- **拆 `GhostDock`（约 970 行）与 `produceCompose` / `computePrediction`（各 150 余行）**：属于大手术，必须在功能稳定期单独做，不适合塞进这一轮
+
+单测 87 → 91（新增 4 项 preflight 断言：非 POST 回 405、无 token 回 401、带 token 放行、token-only 路由忽略头部捷径），场景 36/36 不变。
+
 ### 0.31.27
 F 组：仓库与包的卫生。
 

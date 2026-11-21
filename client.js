@@ -12,9 +12,9 @@
  * Completion and cleanup are therefore a single entry rather than two. Nothing
  * mutates the draft without an explicit accept.
  *
- * The inline ghost is a `position: fixed` layer on <body>, positioned from the
- * caret so no composer container can clip it. Hints live in the composer dock row
- * in normal flow, so a suggestion stays reachable even without the inline layer.
+ * The inline ghost is an absolutely positioned layer inside the composer, so the
+ * host's own overflow clips it and dialogs cover it. Hints live in the composer dock
+ * row in normal flow, so a suggestion stays reachable even without the inline layer.
  *
  * A beacon is posted once per mount and one `paint` report records the real
  * rects, so a silent failure leaves a trace in the Host's composer-quill.log.
@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.27'
+    const BUILD = '0.31.28'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -2516,89 +2516,3 @@ const COVERED_DEBOUNCE_MS = 1200
     return { inject, apply, __test: { usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -1760,6 +1760,67 @@ group('host: cache window')
 }
 
 
+group('host: preflight')
+
+{
+  const api = host.__test
+  const answer = () => {
+    const seen = { status: 0, headers: {}, body: null }
+    return {
+      seen,
+      res: {
+        setHeader: (name, value) => { seen.headers[name] = value },
+        end: (payload) => {
+          seen.body = typeof payload === 'string' ? payload : null
+          seen.written = true
+        },
+        writableEnded: false,
+        statusCode: 0,
+      },
+    }
+  }
+  const token = 'the-real-token'
+
+  check('a non-POST is refused with 405', () => {
+    const { seen, res } = answer()
+    const ok = api.preflight({ method: 'GET', headers: {} }, res, token, { label: 'predict' })
+    assert.equal(ok, false)
+    assert.equal(seen.headers.allow, 'POST')
+  })
+
+  check('a POST without a token is refused', () => {
+    const { res } = answer()
+    const ok = api.preflight({ method: 'POST', headers: {} }, res, token, { label: 'predict' })
+    assert.equal(ok, false)
+  })
+
+  check('the token opens the route', () => {
+    const { res } = answer()
+    const ok = api.preflight({ method: 'POST', headers: { 'x-composer-quill-token': token } }, res, token, { label: 'predict' })
+    assert.equal(ok, true)
+  })
+
+  check('a token-only route ignores the header shortcut', () => {
+    const { res } = answer()
+    const ok = api.preflight(
+      {
+        method: 'POST',
+        headers: {
+          host: '127.0.0.1:1',
+          'sec-fetch-site': 'same-origin',
+          'x-composer-quill-client': '1',
+          'content-type': 'application/json',
+        },
+      },
+      res,
+      token,
+      { tokenOnly: true, label: 'history' },
+    )
+    assert.equal(ok, false)
+  })
+}
+
+
 const summary = [
   '',
   `${passed} passed`,
