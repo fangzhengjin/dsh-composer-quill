@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.22'
+    const BUILD = '0.31.23'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -1938,6 +1938,28 @@ const COVERED_DEBOUNCE_MS = 1200
        * Apply the visible proposal — always in full: the whole tail, or the whole
        * draft for a rewrite. Tab and a chip click behave the same.
        */
+      /**
+       * Where the caret sits relative to the text: 'end' when nothing follows it,
+       * 'inside' when the user parked it mid-sentence, 'unknown' when it cannot be
+       * measured. 'unknown' behaves like 'end' — a measurement failure must never
+       * disable Tab.
+       */
+      function caretPlacement() {
+        const root = editorEl()
+        const selection = window.getSelection?.()
+        if (root === null || selection === null || selection === undefined || selection.rangeCount === 0) return 'unknown'
+        const range = selection.getRangeAt(0)
+        if (!range.collapsed) return 'unknown'
+        const rest = range.cloneRange()
+        try {
+          rest.selectNodeContents(root)
+          rest.setStart(range.endContainer, range.endOffset)
+        } catch {
+          return 'unknown'
+        }
+        return rest.toString().trim() === '' ? 'end' : 'inside'
+      }
+
       const accept = React.useCallback(() => {
         const live = latest.current
         const insert = (text) => typeof inputActions?.insertText === 'function'
@@ -1964,6 +1986,13 @@ const COVERED_DEBOUNCE_MS = 1200
         if (!composeActive) {
           if (historyActive && historyMatch !== null) {
             const chunk = historyMatch.tail
+            // The tail was measured against the end of the draft. With the caret parked
+            // mid-sentence, inserting it would split the user's own words: replace the draft
+            // with the whole suggestion instead.
+            if (caretPlacement() === 'inside' && typeof inputActions?.setDraft === 'function') {
+              const whole = `${live.draft}${chunk}`
+              return inputActions.setDraft(whole) !== false ? afterInsert(whole) : false
+            }
             return insert(chunk) ? afterInsert(latest.current.draft + chunk) : false
           }
           return false
@@ -1974,6 +2003,13 @@ const COVERED_DEBOUNCE_MS = 1200
           return done ? afterInsert(proposal) : false
         }
         const chunk = proposal
+        // The tail was measured against the end of the draft. With the caret parked
+        // mid-sentence, inserting it would split the user's own words: replace the draft
+        // with the whole suggestion instead.
+        if (caretPlacement() === 'inside' && typeof inputActions?.setDraft === 'function') {
+          const whole = `${live.draft}${chunk}`
+          return inputActions.setDraft(whole) !== false ? afterInsert(whole) : false
+        }
         return insert(chunk) ? afterInsert(latest.current.draft + chunk) : false
       }, [nextActive, composeActive, historyActive, historyMatch, proposal, proposalIsTail, current, inputActions, ghost, ghostLayer])
 

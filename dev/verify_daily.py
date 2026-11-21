@@ -135,7 +135,7 @@ def main() -> int:
                 break
             page.wait_for_timeout(150)
         page.evaluate("() => { window.__harnessInserted = null; window.__harnessSetDraft = null }")
-        h("accept(true)")
+        h("accept()")
         page.wait_for_timeout(200)
         fresh = page.evaluate("() => ({ inserted: window.__harnessInserted, setDraft: window.__harnessSetDraft })")
         ok = fresh["inserted"] is not None or (fresh["setDraft"] is not None and "另外" in fresh["setDraft"])
@@ -287,7 +287,7 @@ def main() -> int:
         reset("")
         h("typeLive('帮我把这段日志', {delay: 40})")
         page.wait_for_timeout(1500)
-        h("accept(true)")
+        h("accept()")
         page.wait_for_timeout(300)
         after_accept = h("draft()")
         h("type('')")                      # 把输入框清空
@@ -614,6 +614,40 @@ def main() -> int:
             "S29 Shift+Tab 不插入建议",
             before_shift_tab != "" and after_shift_tab == before_shift_tab,
             f"前 {len(before_shift_tab)} 字 → 后 {len(after_shift_tab)} 字",
+        )
+        h("type('')")
+
+        # ---- S30 光标在句中时采纳：整段替换，不切断原句
+        reset("")
+        h("typeLive('帮我把这段构建日志从头到尾看一遍', {delay: 30})")
+        page.wait_for_timeout(1800)
+        before_s30 = h("draft()")
+        # 把光标停在句中的第 5 个字之后
+        page.evaluate(
+            """() => {
+                const editor = document.querySelector('[data-composer-input]');
+                const node = editor.firstChild;
+                const range = document.createRange();
+                range.setStart(node, Math.min(5, (node.textContent || '').length));
+                range.collapse(true);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }"""
+        )
+        page.evaluate("() => { window.__harnessInserted = null; window.__harnessSetDraft = null }")
+        page.wait_for_timeout(200)
+        h("press({key: 'Tab'})")
+        page.wait_for_timeout(400)
+        applied_s30 = page.evaluate("() => ({ inserted: window.__harnessInserted, setDraft: window.__harnessSetDraft })")
+        after_s30 = h("draft()")
+        record(
+            "S30 句中采纳不切断原句",
+            # 要么整段替换成「原草稿 + 尾巴」，要么什么都不做；不允许把尾巴插进句子中间。
+            (applied_s30["setDraft"] or "").startswith(before_s30)
+            and len(applied_s30["setDraft"] or "") > len(before_s30)
+            and applied_s30["inserted"] is None,
+            f"setDraft={(applied_s30['setDraft'] or '')[:26]!r}… inserted={applied_s30['inserted']} draft={after_s30[:18]!r}…",
         )
         h("type('')")
 

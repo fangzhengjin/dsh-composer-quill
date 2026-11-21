@@ -4,6 +4,20 @@
 
 ## 0.31.x
 
+### 0.31.23
+光标停在句子中间时按 `Tab`，建议的后半句会被插进句子内部——这条修好了（[#1](https://github.com/yugyq/dsh-composer-quill/issues/1)）。
+
+尾巴（`followRemainder` 算出来的那段）是按「整段草稿的末尾」算的，而 `insertText` 插在光标处。两者只在光标位于末尾时一致。
+
+现在采纳前先判断光标位置：
+
+- `caretPlacement()` 返回 `'end'`（后面没有字）、`'inside'`（停在句中）或 `'unknown'`（量不出来，例如没有 selection）
+- `'inside'` 且宿主提供 `setDraft` 时，整段替换成「原草稿 + 尾巴」；`'end'` 与 `'unknown'` 仍走原来的插入路径——测量失败不能让 `Tab` 失效
+
+顺带把场景里的 `accept(true)` 改成 `accept()`：`accept` 的参数就是 `shiftKey`，而 Shift+Tab 从 0.31.21 起不再采纳，继续用它表达「能采纳」是错的。
+
+场景 33 → 34（新增 S30：句中采纳必须整段替换、不允许出现尾巴插在中间），单测 81 不变。
+
 ### 0.31.22
 把 compose 的两条传输路径合并成一份 prompt。之前同一个 `mode=compose`，走 SSE 和走 JSON 问模型的问题并不一样：
 
