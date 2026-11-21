@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.39'
+    const BUILD = '0.31.40'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -2004,6 +2004,8 @@ const COVERED_DEBOUNCE_MS = 1200
   
       const request = React.useCallback((mode, forDraft, force = false, delayOverride = null) => {
         stopTimer()
+        if (mode === 'next') {
+        }
         timer.current = setTimeout(() => {
           timer.current = null
           const live = latest.current

@@ -17,7 +17,7 @@ window.fetch = async (url, init) => {
     if (init.signal.aborted) window.__harnessAborts += 1
     else init.signal.addEventListener('abort', () => { window.__harnessAborts += 1 }, { once: true })
   }
-  calls.push({ url: String(url), mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : 'next'), draft: body.draft ?? '', event: body.event ?? '', detail: body.detail ?? '', sessionId: body.sessionId ?? '' })
+  calls.push({ url: String(url), mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : String(url).includes('history') ? 'history' : 'next'), draft: body.draft ?? '', event: body.event ?? '', detail: body.detail ?? '', sessionId: body.sessionId ?? '' })
   if (String(url).includes('/composer-quill/history')) {
     return {
       ok: true,

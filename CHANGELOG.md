@@ -4,6 +4,27 @@
 
 ## 0.31.x
 
+### 0.31.40
+[#3](https://github.com/yugyq/dsh-composer-quill/issues/3)「切入新会话时发出两次 next 请求」——**不是重复请求，是夹具的测量错误。**
+
+harness 这样打标：
+
+```js
+mode: body.mode ?? (url.includes('beacon') ? 'beacon' : 'next')
+```
+
+`/history` 的请求体里没有 `mode`，于是被记成了 `next`。所以每个新会话看到的是「一次 next + 一次 history」，全被算成 next。
+
+两处埋点（`request()` 入口埋栈、`nextJson()` 入口埋点）都显示每个新会话只走了 **1 次** `nextJson`。
+
+- harness：`/history` 记为 `history`
+- S36：从「基线 2」改成「期望 1」，并额外断言每个新会话有且只有一次 history 读取
+- 临时诊断代码已移除
+
+插件本身在这条路径上没有改动。教训写在 issue 里：我先把猜测当成事实固化成基线，真去埋点才发现标签错了——**夹具的错误会被当成产品行为固化下来**。
+
+单测 109、场景 41/41（连跑两次）。
+
 ### 0.31.39
 拆分 `GhostDock` 的最后一批：请求机器出壳。`GhostDock` 762 → **513 行**，四批累计 999 → 513。
 

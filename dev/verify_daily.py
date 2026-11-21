@@ -794,10 +794,7 @@ def main() -> int:
             f"Esc 后 {after_escape}；Tab 后仍在输入框={after_tab['stillInEditor']} 焦点原在 {before_focus}",
         )
 
-        # ---- S36 切会话后的 next 调用次数（当前基线：每个新会话 2 次）
-        # 这个 2 是**现状**，不是期望值：切到一个新会话会发出两次 next 请求。
-        # 起因未定位（见 issue #3），这条断言的作用是「拆 F 时别把这个数字改掉」，
-        # 以及一旦有人修好重复，它会变红提醒更新基线。
+        # ---- S36 切到新会话只问一次（#3 的真相：多出来的那次是 /history 读取）
         reset("")
         h("typeLive('先说一句占位的话', {delay: 20})")
         page.wait_for_timeout(1600)
@@ -808,13 +805,19 @@ def main() -> int:
         h("setSession('s-third')")
         page.wait_for_timeout(900)
         per_session = {}
+        history_reads = {}
         for call in h("calls"):
-            if call.get("mode") == "next" and call.get("sessionId") in ("s-second", "s-third"):
-                per_session[call["sessionId"]] = per_session.get(call["sessionId"], 0) + 1
+            session = call.get("sessionId")
+            if session not in ("s-second", "s-third"):
+                continue
+            if call.get("mode") == "next":
+                per_session[session] = per_session.get(session, 0) + 1
+            elif call.get("mode") == "history":
+                history_reads[session] = history_reads.get(session, 0) + 1
         record(
-            "S36 切会话的 next 调用次数（基线 2）",
-            per_session.get("s-second") == 2 and per_session.get("s-third") == 2,
-            f"每个新会话的 next 次数={per_session}（现状各 2；若变成 1 说明有人修好了 issue #3）",
+            "S36 切会话只问一次",
+            per_session.get("s-second") == 1 and per_session.get("s-third") == 1,
+            f"每个新会话的 next 次数={per_session}（期望各 1），history 读取={history_reads}",
         )
 
         # ---- S37 失败重试不能活过会话切换
