@@ -4,6 +4,17 @@
 
 ## 0.31.x
 
+### 0.31.22
+把 compose 的两条传输路径合并成一份 prompt。之前同一个 `mode=compose`，走 SSE 和走 JSON 问模型的问题并不一样：
+
+- JSON 侧没有 conversation digest、没有 style profile、没有上一条助手回复
+- JSON 侧算出了 `mustTranslateJson` 却从不使用，跨语言的草稿因此拿不到「用 Case B 翻译」的指示，只有一句「Write in Chinese」
+- `languageName` 的三元把 `resolveLanguage` 返回的 `''`（`ja`/`de`/空 locale）折成 `'Chinese'`，等于向模型谎称用户的语言设置
+
+现在抽出 `composePrompt({ draft, context, digest, style, assistant, settingLanguage })`，两条路径都调它；顺手统一了两处仍然不一致的地方：句兜底结果的 TTL（SSE 24h vs JSON 10s）、回填上下文用的 focus（SSE 用草稿、JSON 用上一条助手回复）。
+
+单测 76 → 81（新增一条纯函数断言 + 四类分支：完整内容、纯函数、未知语种、跨语言、超短草稿），场景 33/33 不变。
+
 ### 0.31.21
 全面审查后修掉的一批行为缺陷，都是代码审查 + 复现确认的，不是猜的：
 

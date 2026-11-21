@@ -1653,6 +1653,49 @@ group('host: fixes')
 }
 
 
+group('host: compose prompt')
+
+{
+  const api = host.__test
+  const base = {
+    draft: '帮我把这段日志整理一下',
+    context: '[]',
+    digest: { latestUserMessages: ['你好'] },
+    style: { count: 3, avgChars: 12, language: 'zh' },
+    assistant: '好的',
+    settingLanguage: 'zh',
+  }
+
+  check('one prompt carries every part both transports need', () => {
+    const prompt = api.composePrompt(base)
+    assert.equal(prompt.includes('Conversation digest'), true)
+    assert.equal(prompt.includes('Style profile'), true)
+    assert.equal(prompt.includes('latest assistant reply'), true)
+  })
+
+  check('the prompt is a pure function of its inputs', () => {
+    assert.equal(api.composePrompt(base), api.composePrompt({ ...base }))
+  })
+
+  check('an unknown locale does not claim Chinese', () => {
+    const prompt = api.composePrompt({ ...base, settingLanguage: '' })
+    assert.equal(prompt.includes("the user's language"), true)
+    assert.equal(prompt.includes('this is the user\'s language setting, so the completion'), true)
+  })
+
+  check('a cross-language draft asks for the Case B translation', () => {
+    const prompt = api.composePrompt({ ...base, draft: '帮我把这段日志整理一下', settingLanguage: 'en' })
+    assert.equal(prompt.includes('REWRITE:'), true)
+    assert.equal(prompt.includes('translated into English'), true)
+  })
+
+  check('a very short draft takes the finish-it branch', () => {
+    const prompt = api.composePrompt({ ...base, draft: '帮' })
+    assert.equal(prompt.includes('characters. Finish it'), true)
+  })
+}
+
+
 const summary = [
   '',
   `${passed} passed`,

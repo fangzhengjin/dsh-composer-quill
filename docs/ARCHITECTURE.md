@@ -1,6 +1,6 @@
 # 架构设计
 
-> 适用版本：0.31.21 ｜ 代码：`index.js`（宿主，约 1840 行）、`client.js`（浏览器，约 2540 行）
+> 适用版本：0.31.22 ｜ 代码：`index.js`（宿主，约 1840 行）、`client.js`（浏览器，约 2540 行）
 
 ## 1. 定位与边界
 
@@ -29,6 +29,8 @@
 - `createGhostStore()` —— 建议状态机
 - `createGhostLayer()` —— 建议层，嵌在输入框内，随宿主裁切
 - `localStorage` —— 建议持久化与设置
+
+补写的 prompt 只有一份（`composePrompt()`），与传输方式无关：SSE 与 JSON 两条路径传入同一组输入，模型看到的是同一个问题。
 
 两半通过 `package.json` 的 `dsh.client` 字段装配。浏览器侧按 **rev 钉在启动图里**：改代码必须重启 DSH，刷新页面不够。
 
