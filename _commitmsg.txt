@@ -1,0 +1,10 @@
+fix: behaviour bugs found by the full review
+
+- 回填行插到 transcript 末尾：transcriptOf 把最新块翻成旧→新后又往尾部 push，第 22 轮的内容排在第 30 轮之后；现在按事件下标排序
+- {"text": …} 外壳被拼进草稿：append 分支先按整条消息解包，解不出就丢弃
+- 截断的 JSON 变成候选：以 { / [ 开头但解析失败的回复直接判为无候选
+- 单飞等待者把失败说成「无需修改」：现在发 error 帧并记 compose-stream-error
+- 缓存键里存了未遮蔽的草稿：改用 maskSecrets(draft)
+- Shift+Tab 被当成采纳：shiftKey 放行给宿主
+
+单测 72 → 76，场景 32 → 33，版本 0.31.21。

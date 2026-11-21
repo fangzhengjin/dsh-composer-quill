@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.20'
+    const BUILD = '0.31.21'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -2133,7 +2133,7 @@ const COVERED_DEBOUNCE_MS = 1200
             return
           }
           if (!visible) return
-          if (event.key === 'Tab' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+          if (event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
             if (acceptRef.current(true)) {
               event.preventDefault()
               event.stopPropagation()

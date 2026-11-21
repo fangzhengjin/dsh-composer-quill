@@ -282,7 +282,9 @@ function transcriptOf(events, options = {}) {
       }
     }
     if (serialized.length > Math.max(60, remaining)) continue
-    picked.push(value)
+    // Keep the event index: the list is sorted back into event order below, so a
+    // backfilled row can never masquerade as the newest message.
+    picked.push({ value, index })
     size += serialized.length + 1
   }
   if (picked.length === 0) return ''
@@ -292,7 +294,7 @@ function transcriptOf(events, options = {}) {
   const newestLimit = Math.max(2, maxRows - backfillSlots)
   const trimmed = picked.slice(0, newestLimit).reverse()
   if (backfillSlots > 0 && trimmed.length < maxRows) {
-    const chosen = new Set(trimmed.map((row) => row.text))
+    const chosen = new Set(trimmed.map((entry) => entry.value.text))
     const total = list.length
     const candidates = []
     // Only recent-ish rows may be pulled back in. Scored across the whole session,
@@ -313,21 +315,22 @@ function transcriptOf(events, options = {}) {
       const recency = 1 - 0.7 * age
       const score = overlapScore(text, focus) * recency
       if (score < 0.12) continue
-      candidates.push({ text, score, role: event.type === 'user/message' ? 'user' : 'assistant' })
+      candidates.push({ text, score, index, role: event.type === 'user/message' ? 'user' : 'assistant' })
     }
     candidates.sort((left, right) => right.score - left.score)
     let size = JSON.stringify(trimmed).length
     for (const candidate of candidates) {
-      if (trimmed.length >= maxRows - 0) break
+      if (trimmed.length >= maxRows) break
       if (size + candidate.text.length + 40 > maxChars) continue
       chosen.add(candidate.text)
-      trimmed.push(row(candidate.role, candidate.text))
+      trimmed.push({ value: row(candidate.role, candidate.text), index: candidate.index })
       size += candidate.text.length + 40
     }
-    // Relevance inserts may sit after the newest rows; restore chronological order
-    // is impossible once shortened, so keep insertion order (newest block first).
+    // Event order, always: appending a backfilled row would present an old topic as the
+    // newest message, which is the failure this window exists to prevent.
+    trimmed.sort((left, right) => left.index - right.index)
   }
-  return JSON.stringify(trimmed)
+  return JSON.stringify(trimmed.map((entry) => entry.value))
 }
 
 /**
@@ -638,6 +641,9 @@ function parseList(reply, key, limit, max, skipToken) {
     }
   }
   if (list === null) {
+      // A reply that opened like JSON but never closed is a truncated answer, not a
+      // list of lines: forwarding its fragments would show the model's own syntax.
+      if (fenced.trimStart().startsWith('{') || fenced.trimStart().startsWith('[')) return []
     // A prose refusal ("I can't help with that") is not a candidate: accept a
     // plain-text reply only when it is a short list without sentences.
     const lines = fenced.split('\n').map((line) => line.trim()).filter(Boolean)
@@ -685,6 +691,14 @@ function parseComposeReply(reply, draft, options = {}) {
   // With a very short draft the model can only guess; a fragment like "我。" is
   // worse than nothing, so only a full rewrite is acceptable there.
   if (!allowTail) return null
+  // A model that answers with {"text": …} is handing over a full message, not a
+  // tail. Unwrap it; anything else that still starts like JSON is a parse failure
+  // and must not reach the composer as literal syntax.
+  if (text.startsWith('{') || text.startsWith('[')) {
+    const composed = parseComposed(text, draft)
+    if (composed === null) return null
+    return { mode: 'full', text: composed }
+  }
   const tail = text.trim()
   if (tail === '') return null
   if (looksLikeMeta(tail)) return null
@@ -873,7 +887,7 @@ function cacheKey(sessionId, mode, draft, events, route, language = '', epoch = 
   // or jitter (a Session switching in loads its events a moment later), which made
   // identical situations miss each other. The turn counter is the authoritative
   // answer to "has anything happened", so it carries that job alone.
-  return `${sessionId}|${mode}|${draft}|${transcriptStamp(events)}|${model}|${language}|${epoch}`
+  return `${sessionId}|${mode}|${maskSecrets(draft)}|${transcriptStamp(events)}|${model}|${language}|${epoch}`
 }
 
 function cached(key) {
@@ -1106,7 +1120,15 @@ async function composeStream(ctx, { sessionId, draft, locale, forced, epoch }, r
     // result instead of paying for a second model call.
     const inFlight = composeInFlight.get(key)
     if (inFlight !== undefined) {
-      await withAbort(inFlight.catch(() => {}), signal)
+      const shared = await withAbort(inFlight.catch((error) => error), signal)
+      // A failed producer leaves the cache empty. Reporting that as "unchanged" told
+      // the client to drop the suggestion with no reason and no retry; say what happened.
+      if (shared instanceof Error) {
+        trace('compose-stream-error', { message: shared.message.slice(0, 120) })
+        send('error', { message: shared.message })
+        res.end()
+        return
+      }
       const landed = cached(key)
       if (landed !== undefined) {
         replayCompose(send, landed, cleanDraft)
@@ -1852,7 +1874,8 @@ export function apply(ctx) {
 }
 
 /** Pure helpers exposed for the offline smoke test. */
-export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText }
+export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey }
+
 
 
 

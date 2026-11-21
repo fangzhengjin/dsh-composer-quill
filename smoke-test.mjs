@@ -1616,6 +1616,43 @@ group('host: security')
   })
 }
 
+group('host: fixes')
+
+{
+  const api = host.__test
+
+  check('a backfilled row keeps its chronological place', () => {
+    const events = []
+    for (let i = 1; i <= 30; i += 1) {
+      const text = i === 22 ? 'CSV 导出时区错了' : '第 ' + i + ' 轮：帮我看下这个日志'
+      events.push({ type: 'user/message', seq: i * 2, data: { content: [{ type: 'text', text }] } })
+      events.push({ type: 'assistant/message', seq: i * 2 + 1, data: { message: { content: [{ type: 'text', text: '回答 ' + i }] } } })
+    }
+    const rows = JSON.parse(api.transcriptOf(events, { rows: 6, chars: 4000, focus: 'CSV 导出时区' }))
+    const last = rows[rows.length - 1].text
+    assert.equal(last.includes('CSV 导出'), false, JSON.stringify(rows.map((row) => row.text.slice(0, 12))))
+    assert.equal(/回答 30|第 30 轮/.test(last), true)
+  })
+
+  check('a JSON shell becomes a message, not literal syntax', () => {
+    for (const reply of ['{"text":"再贴一下完整栈"}', '{"text": "再贴一下完整栈"}']) {
+      const parsed = api.parseComposeReply(reply, '帮我看下这个报错')
+      if (parsed !== null) assert.equal(parsed.text.includes('{"text"'), false, reply)
+    }
+  })
+
+  check('a truncated JSON reply yields no candidates', () => {
+    assert.deepEqual(api.parseCandidates('{"candidates":["先固定 auth 最不稳'), [])
+  })
+
+  check('the cache key carries the masked draft, not the raw one', () => {
+    const key = api.cacheKey('session-1', 'next', '我的 key 是 sk-abcdef1234567890', [], { provider: 'p', model: 'm' }, 'zh', 1)
+    assert.equal(key.includes('sk-abcdef'), false)
+    assert.equal(key.includes('[redacted'), true)
+  })
+}
+
+
 const summary = [
   '',
   `${passed} passed`,

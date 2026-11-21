@@ -602,6 +602,21 @@ def main() -> int:
         )
         h("setComposeMode('ok')")
 
+        # ---- S29 Shift+Tab 不是采纳
+        reset("")
+        h("typeLive('帮我把这段构建日志从头到尾看一遍', {delay: 30})")
+        page.wait_for_timeout(1800)
+        before_shift_tab = h("draft()")
+        h("press({key: 'Tab', shiftKey: true})")
+        page.wait_for_timeout(300)
+        after_shift_tab = h("draft()")
+        record(
+            "S29 Shift+Tab 不插入建议",
+            before_shift_tab != "" and after_shift_tab == before_shift_tab,
+            f"前 {len(before_shift_tab)} 字 → 后 {len(after_shift_tab)} 字",
+        )
+        h("type('')")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()
