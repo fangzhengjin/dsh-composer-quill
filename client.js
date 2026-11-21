@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.31'
+    const BUILD = '0.31.32'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -390,6 +390,9 @@ const COVERED_DEBOUNCE_MS = 1200
           const current = store.getSnapshot()
           const items = usableItems(current.items)
           const unchanged = meta !== null && typeof meta === 'object' && meta.reason === 'unchanged'
+          // An error for this draft outranks a later "nothing to add": the user asked
+          // once, it failed, and a quiet empty answer must not erase that fact.
+          if (unchanged && current.phase === 'error') return
           store.set({
             ...current,
             phase: unchanged || items.length === 0 ? 'empty' : 'ready',
@@ -2603,6 +2606,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

@@ -1903,6 +1903,41 @@ group('client: booking')
 }
 
 
+group('client: error-first')
+
+{
+  const api = globalThis.__ghostFactory.factory((name) => {
+    if (name === 'react') return fakeReact
+    throw new Error(`unexpected require(${name})`)
+  }).__test
+
+  check('an error outranks a later "nothing to add"', () => {
+    const ghost = api.createGhostStore()
+    const active = ghost.begin('s1', 'compose', '帮我把这段日志')
+    ghost.streamFail('model call failed')
+    assert.equal(ghost.getSnapshot().phase, 'error')
+    // The retry comes back saying the draft needs nothing: the reason must survive.
+    ghost.streamDone({ reason: 'unchanged' })
+    const after = ghost.getSnapshot()
+    assert.equal(after.phase, 'error')
+    assert.equal(after.error, 'model call failed')
+    void active
+  })
+
+  check('a real answer after an error still wins', () => {
+    const ghost = api.createGhostStore()
+    ghost.begin('s1', 'compose', '草稿')
+    ghost.streamFail('model call failed')
+    ghost.streamFinal('草稿，补一句。', 'append')
+    ghost.streamDone({ mode: 'append' })
+    const after = ghost.getSnapshot()
+    assert.equal(after.phase, 'ready')
+    assert.deepEqual(after.items, ['草稿，补一句。'])
+    assert.equal(after.error, null)
+  })
+}
+
+
 const summary = [
   '',
   `${passed} passed`,
