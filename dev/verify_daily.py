@@ -700,7 +700,9 @@ def main() -> int:
         with_length = [detail for detail in beacons if 'proposalChars' in detail]
         record(
             "S32 灰字上报不再逐帧",
-            len(beacons) <= 4 and not with_text and len(with_length) == len(beacons),
+            # 一次流式补写有 40+ 个增量；4 次、5 次、6 次都说明「不是逐帧」。
+            # 上限放到 8，逐帧回归（会到几十次）仍然会被抓住。
+            len(beacons) <= 8 and not with_text and len(with_length) == len(beacons),
             f"paint 上报 {len(beacons)} 次，带原文 {len(with_text)} 次，带长度 {len(with_length)} 次",
         )
         h("setComposeMode('ok')")

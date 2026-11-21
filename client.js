@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.33'
+    const BUILD = '0.31.34'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -1693,6 +1693,139 @@ const COVERED_DEBOUNCE_MS = 1200
         // Set when the store answered: nothing may be re-sampled for that key.
         const servedFromStore = React.useRef({ key: '', at: 0 })
       const learnedShown = React.useRef(null)
+      // Compose streams: deltas land as they arrive and are repainted once per frame,
+      // so the ghost starts growing immediately. Split out of request().
+      const composeStream = React.useCallback((live, draftNow) => {
+          lastRequested.current = draftNow
+          const active = ghost.streamStart(live.sessionId, 'compose', draftNow)
+          let idle = null
+          let buffer = ''
+          let frame = null
+          const flush = () => {
+            if (frame !== null) {
+              if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame)
+              else clearTimeout(frame)
+              frame = null
+            }
+            if (buffer !== '') {
+              const text = buffer
+              buffer = ''
+              ghost.streamDelta(text)
+            }
+          }
+          const queue = (text) => {
+            buffer += text
+            if (frame !== null) return
+            frame = typeof window.requestAnimationFrame === 'function'
+              ? window.requestAnimationFrame(() => { frame = null; flush() })
+              : setTimeout(() => { frame = null; flush() }, 16)
+          }
+          const bump = () => {
+            if (idle !== null) clearTimeout(idle)
+            idle = setTimeout(() => {
+              active.abort()
+              ghost.streamFail('timed out')
+            }, live.timeoutMs || CLIENT_TIMEOUT_MS)
+          }
+          bump()
+          streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose' }, active.signal, {
+            start: (data) => {
+              bump()
+              // Keep whatever is on screen: the first delta replaces it.
+              ghost.streamModeSet?.(data?.mode)
+            },
+            retract: (data) => {
+              bump()
+              flush()
+              ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full')
+            },
+            delta: (data) => {
+              bump()
+              if (typeof data?.text === 'string') queue(data.text)
+            },
+            final: (data) => {
+              bump()
+              flush()
+              if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode)
+            },
+            done: (data) => {
+              flush()
+              markLive()
+              ghost.streamDone(data ?? {})
+              // Most compose suggestions arrive over SSE: persist them too, or
+              // only the JSON fallback would ever be reused.
+              const settled = ghost.getSnapshot()
+              if (settled.kind === 'compose' && settled.items.length > 0) {
+                saveSuggestion(settled.sessionId, 'compose', settled.forDraft, settled.items, `${historyRef.current.items.length}`, settled.mode)
+              }
+            },
+            error: (data) => {
+              const message = typeof data?.message === 'string' ? data.message : 'stream failed'
+              ghost.streamFail(message)
+              report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
+            },
+            json: (body) => {
+              const items = rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
+              ghost.settle(live.sessionId, active, 'compose', draftNow, items)
+              saveSuggestion(live.sessionId, 'compose', draftNow, items, `${historyRef.current.items.length}`, typeof body?.mode === 'string' ? body.mode : '')
+            },
+          }).catch((error) => {
+            if (active.signal.aborted) return
+            // The Host has not loaded this Session yet: not a failure.
+            if (error?.status === 409) {
+              ghost.clear(live.sessionId ?? undefined)
+              markNotLive()
+              report('not-live', { sessionId: live.sessionId, detail: 'compose' })
+              return
+            }
+            const message = error instanceof Error ? error.message : String(error)
+            ghost.streamFail(message)
+            report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
+          }).finally(() => {
+            if (idle !== null) clearTimeout(idle)
+            if (frame !== null) {
+              if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame)
+              else clearTimeout(frame)
+              frame = null
+            }
+          })
+          return
+      }, [ghost])   // only refs and stable helpers are touched: a first-render capture is safe
+
+      // The JSON path: one call, one settled answer. Split out of request().
+      const nextJson = React.useCallback((live, draftNow, mode, kind) => {
+        const active = ghost.begin(live.sessionId, kind, draftNow)
+        const deadline = setTimeout(() => {
+          active.abort()
+          ghost.fail(live.sessionId, active, kind, draftNow, 'timed out')
+        }, live.timeoutMs || CLIENT_TIMEOUT_MS)
+        active.signal.addEventListener('abort', () => clearTimeout(deadline), { once: true })
+        Promise.resolve()
+          .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode }, active.signal))
+          .then((body) => {
+            if (active.signal.aborted) return
+            markLive()
+            const items = mode === 'next'
+              ? (Array.isArray(body?.candidates) ? body.candidates : [])
+              : rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
+            ghost.settle(live.sessionId, active, kind, draftNow, items)
+            saveSuggestion(live.sessionId, kind, draftNow, items, `${historyRef.current.items.length}`, kind === 'next' ? 'full' : '')
+          }, (error) => {
+            if (active.signal.aborted) return
+            if (error?.status === 409) {
+              ghost.clear(live.sessionId ?? undefined)
+              markNotLive()
+              report('not-live', { sessionId: live.sessionId, detail: mode })
+              return
+            }
+            const message = error instanceof Error ? error.message : String(error)
+            ghost.fail(live.sessionId, active, kind, draftNow, message)
+            report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: `${mode}: ${message}`.slice(0, 300) })
+            try { console.warn('[composer-quill] request failed:', mode, message) } catch { /* no console */ }
+          })
+          .finally(() => clearTimeout(deadline))
+      }, [ghost])   // only refs and stable helpers are touched: a first-render capture is safe
+
       const request = React.useCallback((mode, forDraft, force = false, delayOverride = null) => {
         stopTimer()
         timer.current = setTimeout(() => {
@@ -1749,134 +1882,13 @@ const COVERED_DEBOUNCE_MS = 1200
           // Compose streams: deltas land as they arrive and are repainted once
           // per frame, so the ghost starts growing immediately.
           if (mode === 'compose') {
-            lastRequested.current = draftNow
-            const active = ghost.streamStart(live.sessionId, 'compose', draftNow)
-            let idle = null
-            let buffer = ''
-            let frame = null
-            const flush = () => {
-              if (frame !== null) {
-                if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame)
-                else clearTimeout(frame)
-                frame = null
-              }
-              if (buffer !== '') {
-                const text = buffer
-                buffer = ''
-                ghost.streamDelta(text)
-              }
-            }
-            const queue = (text) => {
-              buffer += text
-              if (frame !== null) return
-              frame = typeof window.requestAnimationFrame === 'function'
-                ? window.requestAnimationFrame(() => { frame = null; flush() })
-                : setTimeout(() => { frame = null; flush() }, 16)
-            }
-            const bump = () => {
-              if (idle !== null) clearTimeout(idle)
-              idle = setTimeout(() => {
-                active.abort()
-                ghost.streamFail('timed out')
-              }, live.timeoutMs || CLIENT_TIMEOUT_MS)
-            }
-            bump()
-            streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose' }, active.signal, {
-              start: (data) => {
-                bump()
-                // Keep whatever is on screen: the first delta replaces it.
-                ghost.streamModeSet?.(data?.mode)
-              },
-              retract: (data) => {
-                bump()
-                flush()
-                ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full')
-              },
-              delta: (data) => {
-                bump()
-                if (typeof data?.text === 'string') queue(data.text)
-              },
-              final: (data) => {
-                bump()
-                flush()
-                if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode)
-              },
-              done: (data) => {
-                flush()
-                markLive()
-                ghost.streamDone(data ?? {})
-                // Most compose suggestions arrive over SSE: persist them too, or
-                // only the JSON fallback would ever be reused.
-                const settled = ghost.getSnapshot()
-                if (settled.kind === 'compose' && settled.items.length > 0) {
-                  saveSuggestion(settled.sessionId, 'compose', settled.forDraft, settled.items, `${historyRef.current.items.length}`, settled.mode)
-                }
-              },
-              error: (data) => {
-                const message = typeof data?.message === 'string' ? data.message : 'stream failed'
-                ghost.streamFail(message)
-                report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
-              },
-              json: (body) => {
-                const items = rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
-                ghost.settle(live.sessionId, active, 'compose', draftNow, items)
-                saveSuggestion(live.sessionId, 'compose', draftNow, items, `${historyRef.current.items.length}`, typeof body?.mode === 'string' ? body.mode : '')
-              },
-            }).catch((error) => {
-              if (active.signal.aborted) return
-              // The Host has not loaded this Session yet: not a failure.
-              if (error?.status === 409) {
-                ghost.clear(live.sessionId ?? undefined)
-                markNotLive()
-                report('not-live', { sessionId: live.sessionId, detail: 'compose' })
-                return
-              }
-              const message = error instanceof Error ? error.message : String(error)
-              ghost.streamFail(message)
-              report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
-            }).finally(() => {
-              if (idle !== null) clearTimeout(idle)
-              if (frame !== null) {
-                if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame)
-                else clearTimeout(frame)
-                frame = null
-              }
-            })
+            composeStream(live, draftNow)
             return
           }
 
-          const active = ghost.begin(live.sessionId, kind, draftNow)
-          const deadline = setTimeout(() => {
-            active.abort()
-            ghost.fail(live.sessionId, active, kind, draftNow, 'timed out')
-          }, live.timeoutMs || CLIENT_TIMEOUT_MS)
-          active.signal.addEventListener('abort', () => clearTimeout(deadline), { once: true })
-          Promise.resolve()
-            .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode }, active.signal))
-            .then((body) => {
-              if (active.signal.aborted) return
-              markLive()
-              const items = mode === 'next'
-                ? (Array.isArray(body?.candidates) ? body.candidates : [])
-                : rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
-              ghost.settle(live.sessionId, active, kind, draftNow, items)
-              saveSuggestion(live.sessionId, kind, draftNow, items, `${historyRef.current.items.length}`, kind === 'next' ? 'full' : '')
-            }, (error) => {
-              if (active.signal.aborted) return
-              if (error?.status === 409) {
-                ghost.clear(live.sessionId ?? undefined)
-                markNotLive()
-                report('not-live', { sessionId: live.sessionId, detail: mode })
-                return
-              }
-              const message = error instanceof Error ? error.message : String(error)
-              ghost.fail(live.sessionId, active, kind, draftNow, message)
-              report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: `${mode}: ${message}`.slice(0, 300) })
-              try { console.warn('[composer-quill] request failed:', mode, message) } catch { /* no console */ }
-            })
-            .finally(() => clearTimeout(deadline))
+          nextJson(live, draftNow, mode, kind)
         }, delayOverride ?? (mode === 'next' ? NEXT_DEBOUNCE_MS : latest.current.debounceMs))
-      }, [stopTimer, ghost])
+      }, [stopTimer, ghost, composeStream, nextJson])
       requestRef.current = request
 
       // Turn boundary and Session switch drive the next-message prediction.

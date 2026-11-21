@@ -2,7 +2,7 @@
 
 > **状态：已实施（0.31.33）。** `request()` 先问 `gateFor()`，再按返回的 `effects` 执行；顺序写法的闸门链已删除。
 >
-> 适用版本：0.31.33 ｜ `gateFor()` 与 `request()` 在同一文件，紧邻彼此
+> 适用版本：0.31.34 ｜ `gateFor()` 与 `request()` 在同一文件，紧邻彼此
 
 ## 1. 为什么是「闸门表」而不是「状态机」
 
@@ -91,6 +91,6 @@ request(mode, forDraft, force = false, delayOverride = null)
 
 1. ~~写 `gateFor()` + 快照测试~~ — 0.31.33，5 组断言锁住闸门顺序与副作用
 2. ~~`request()` 改问 `gateFor`~~ — 0.31.33，闸门链换成 30 行接线
-3. `request()` 从 187 降到 **183** 行，不是预估的 90：省下的是判定，两条发送路径仍占 130 行
-4. 下一步：把两条发送路径（SSE / JSON）各抽成一个函数，才轮到那个 90
+3. ~~把两条发送路径抽成函数~~ — 0.31.34，`request()` 从 183 降到 **63** 行（`composeStream` / `nextJson`）
+4. ~~两条发送路径各抽成函数~~ — 0.31.34 完成，`request()` 现在是一个调度器
 5. `dismissedDraft`、`switchDraft` 并入 `dockReducer`（与已迁移的三个闸门同一张表）

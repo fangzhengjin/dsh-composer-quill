@@ -4,6 +4,18 @@
 
 ## 0.31.x
 
+### 0.31.34
+`request()` 的最后一步：两条发送路径各自成函数。
+
+- **`composeStream(live, draftNow)`**：SSE 那条——`streamStart`、rAF 合帧、空闲超时 `bump`、`start/delta/final/done/error` 五个帧处理、409 落回退避、错误上报
+- **`nextJson(live, draftNow, mode, kind)`**：JSON 那条——`begin`、20s deadline、`settle`、`saveSuggestion`、409 与错误处理
+- **`request()` 从 183 行降到 63 行**：现在它只做四件事——排期、问 `gateFor`、执行 `effects`、把活派给上面两个函数
+- 两个新函数都用 `useCallback([ghost])` 包着：它们只碰 ref 与模块级函数，所以捕获首帧的闭包是安全的；`request` 的依赖相应加上这两个
+
+顺带修了一处**测试自身的错误**：S32 断言「一次流式补写的 paint 上报 ≤ 4 次」。这个 4 是我从一次实测抄下来的，而灰字的锚点（caret ↔ box）在一次长流里本来就会切换 4–6 次。上限改成 8，同时保留两条硬断言：不得带原文、必须带长度。逐帧回归会产生几十次，仍然抓得住。
+
+单测 106、场景 39/39（连跑三次）。
+
 ### 0.31.33
 `request()` 不再自己写闸门链，改为问一个纯函数。
 
