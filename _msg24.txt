@@ -1,0 +1,14 @@
+feat(client): say why a suggestion is missing
+
+A 组三条，都是用户能直接感觉到的：
+
+- 失败从不展示：error 写进 store 但界面没有读取点。现在同一行显示
+  「建议失败：<原因>」（截断 60 字），并作为 role="status" 播报一次
+- JSON 路径不过滤候选：只查 Array.isArray，脏数据会在渲染期抛错。两条路径
+  现在共用 usableItems()
+- npm test -- --list 少算 5 条：listOnly 早退在安全组之前
+
+顺带修掉一个假绿的测试：S6 用的 setComposeMode('fail-always') 假模型从来没实现过，
+它一直走成功路径。补上该模式后 S6 才真正验证重试。
+
+单测 81 → 83，场景 34 → 35（S31）。版本 0.31.24。

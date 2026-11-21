@@ -32,7 +32,7 @@ window.fetch = async (url, init) => {
     }
   }
   if (!String(url).includes('beacon') && body.mode === 'compose') {
-    if (composeMode === 'fail-once' && composeFailures === 0) {
+    if ((composeMode === 'fail-once' && composeFailures === 0) || composeMode === 'fail-always') {
       composeFailures += 1
       return { ok: false, status: 500, json: async () => ({ error: { message: 'model call failed' } }) }
     }
@@ -97,6 +97,7 @@ const labels = {
   'hint.complete': '按 Tab 补全',
   'hint.replace': '按 Tab 采用改写',
   'hint.pending': '补写中…',
+  'hint.error': '建议失败',
   'hint.history': '按 Tab 补全（历史）',
   'hint.position': '第 {index}/{total} 条，←/→ 切换',
   'status.prefix': '建议：',

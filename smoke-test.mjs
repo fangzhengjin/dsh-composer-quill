@@ -1556,7 +1556,6 @@ group('client: audit findings')
 
 for (const off of disposers) off()
 
-if (listOnly) process.exit(0)
 
 const elapsed = slow.reduce((total, entry) => total + entry.ms, 0)
 const worst = [...slow].sort((left, right) => right.ms - left.ms).slice(0, 3)
@@ -1692,6 +1691,28 @@ group('host: compose prompt')
   check('a very short draft takes the finish-it branch', () => {
     const prompt = api.composePrompt({ ...base, draft: '帮' })
     assert.equal(prompt.includes('characters. Finish it'), true)
+  })
+}
+
+
+  if (listOnly) process.exit(0)
+
+group('client: items')
+
+{
+  const api = globalThis.__ghostFactory.factory((name) => {
+    if (name === 'react') return fakeReact
+    throw new Error(`unexpected require(${name})`)
+  }).__test
+
+  check('a suggestion list keeps only non-empty strings', () => {
+    assert.deepEqual(api.usableItems(['整理一下', '', 3, null, '再看日志']), ['整理一下', '再看日志'])
+  })
+
+  check('anything that is not an array yields nothing', () => {
+    for (const value of [undefined, null, 'text', 42]) {
+      assert.deepEqual(api.usableItems(value), [], String(value))
+    }
   })
 }
 

@@ -651,6 +651,41 @@ def main() -> int:
         )
         h("type('')")
 
+        # ---- S31 失败要说出来
+        # 前面几条场景换过模式、调过假模型的时序；从干净页面开始，这条测的才是失败本身。
+        page.reload()
+        page.wait_for_function("() => window.__harnessReady === true", timeout=30000)
+        reset("")
+        h("setComposeMode('fail-always')")
+        h("typeLive('帮我把这段构建日志从头到尾看一遍', {delay: 30})")
+        # 失败 → 重试一次 → 再失败才落到 error 状态，固定等待不够稳。
+        error_shown = None
+        for _ in range(16):
+            page.wait_for_timeout(400)
+            error_shown = page.evaluate(
+                """() => {
+                    const node = document.querySelector('[data-composer-quill="dock-error"]');
+                    return node ? (node.textContent || '') : null;
+                }"""
+            )
+            if error_shown:
+                break
+        dock_names = page.evaluate(
+            """() => Array.from(document.querySelectorAll('[data-composer-quill]'))
+                .map((n) => n.getAttribute('data-composer-quill'))
+                .filter((name) => name && name.startsWith('dock-'))"""
+        )
+        state_now = h("store()") or {}
+        calls_now = [call for call in (h("calls") or []) if call.get("mode") == "compose"]
+        record(
+            "S31 失败时显示原因",
+            isinstance(error_shown, str) and "建议失败" in error_shown,
+            f"dock-error={error_shown!r} phase={state_now.get('phase')} error={state_now.get('error')!r} "
+            f"forDraft={state_now.get('forDraft')!r} compose_calls={len(calls_now)} dock={dock_names}",
+        )
+        h("setComposeMode('ok')")
+        h("type('')")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()

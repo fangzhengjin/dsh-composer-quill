@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.23'
+    const BUILD = '0.31.24'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -60,6 +60,7 @@ const COVERED_DEBOUNCE_MS = 1200
       'hint.complete': '按 Tab 补全',
       'hint.replace': '按 Tab 采用改写',
       'hint.pending': '补写中…',
+      'hint.error': '建议失败',
       'hint.keys': 'Tab 采纳 · Esc 关闭 · Ctrl+Shift+Space 手动',
       'hint.busy': '回答中 · 建议暂停',
       'hint.history': '按 Tab 补全（历史）',
@@ -83,6 +84,7 @@ const COVERED_DEBOUNCE_MS = 1200
       'hint.complete': 'Press Tab to complete',
       'hint.replace': 'Press Tab to use the rewrite',
       'hint.pending': 'Composing…',
+      'hint.error': 'Suggestion failed',
       'hint.keys': 'Tab accepts · Esc dismisses · Ctrl+Shift+Space manually',
       'hint.busy': 'Replying · suggestions paused',
       'hint.history': 'Press Tab to complete from history',
@@ -251,6 +253,14 @@ const COVERED_DEBOUNCE_MS = 1200
       sessionId: null, phase: 'idle', kind: 'next', items: [], index: 0, error: null, forDraft: '', requested: null,
     })
 
+    /**
+     * A suggestion is a non-empty string or it is nothing. Both transports go through
+     * this: a malformed JSON answer used to reach the renderer and throw there.
+     */
+    function usableItems(value) {
+      return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item !== '') : []
+    }
+
     function createGhostStore() {
       const store = createSnapshotStore(IDLE)
       let controller = null
@@ -333,7 +343,7 @@ const COVERED_DEBOUNCE_MS = 1200
         streamDone: (meta) => {
           controller = null
           const current = store.getSnapshot()
-          const items = current.items.filter((item) => typeof item === 'string' && item !== '')
+          const items = usableItems(current.items)
           const unchanged = meta !== null && typeof meta === 'object' && meta.reason === 'unchanged'
           store.set({
             ...current,
@@ -414,9 +424,12 @@ const COVERED_DEBOUNCE_MS = 1200
           })
           return controller
         },
-        settle: (sessionId, active, kind, forDraft, items) => {
+        settle: (sessionId, active, kind, forDraft, rawItems) => {
           if (controller !== active || active.signal.aborted) return
           controller = null
+          // The streaming path already drops anything that is not a non-empty string;
+          // a malformed JSON answer used to reach the renderer instead.
+          const items = usableItems(rawItems)
           store.set({
             sessionId,
             // 'empty' is a settled answer ("nothing to add"), not a pending state.
@@ -2196,6 +2209,11 @@ const COVERED_DEBOUNCE_MS = 1200
       // A permanently visible row: a proposal, a pending note, or the key hints.
       // It keeps a fixed height so the composer never jumps as states change.
       const statusText = nextActive ? current : (composeActive || historyActive) ? proposal : ''
+      // A failure used to be invisible: the store recorded it and nothing rendered it.
+      const failureText = state.phase === 'error' && typeof state.error === 'string' && state.error !== ''
+        && (state.forDraft === draftBase || state.forDraft === draft)
+        ? state.error
+        : ''
       // "Composing…" covers the whole wait for a usable proposal — including the
       // debounce window and a request that was answered for a slightly older
       // draft. It stops as soon as this exact draft has a settled answer
@@ -2301,6 +2319,12 @@ const COVERED_DEBOUNCE_MS = 1200
             'data-composer-quill': 'dock-pending',
             style: { ...chipStyle, borderStyle: 'dotted', opacity: 0.7 },
           }, t('hint.pending'))
+          : failureText !== ''
+            ? h('span', {
+              'data-composer-quill': 'dock-error',
+              title: failureText,
+              style: { ...chipStyle, borderStyle: 'dashed', opacity: 0.85 },
+            }, `${t('hint.error')}：${failureText.length > 60 ? `${failureText.slice(0, 60)}…` : failureText}`)
           : statusText !== ''
             ? h('button', {
               type: 'button',
@@ -2324,7 +2348,7 @@ const COVERED_DEBOUNCE_MS = 1200
             clipPath: 'inset(50%)',
             whiteSpace: 'nowrap',
           },
-        }, `${t('status.prefix')}${statusText || (heldText !== '' ? `${heldText}　·　${t('hint.pending')}` : pendingAny ? t('hint.pending') : '')}`))
+        }, `${t('status.prefix')}${statusText || failureText || (heldText !== '' ? `${heldText}　·　${t('hint.pending')}` : pendingAny ? t('hint.pending') : '')}`))
     }
 
     /** Settings → General: on/off, automatic or manual, pause and timeout. */
@@ -2486,7 +2510,7 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
 
