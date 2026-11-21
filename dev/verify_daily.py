@@ -706,6 +706,92 @@ def main() -> int:
         h("setComposeMode('ok')")
         h("type('')")
 
+        # ---- S33 设置控件都有可访问名
+        page.reload()
+        page.wait_for_function("() => window.__harnessReady === true", timeout=30000)
+        page.evaluate("() => window.__harness.showSettings()")
+        page.wait_for_timeout(500)
+        names = page.evaluate(
+            """() => ['settings-mode', 'settings-language', 'settings-debounce', 'settings-timeout']
+                .map((key) => {
+                    const node = document.querySelector('[data-composer-quill="' + key + '"]');
+                    if (!node) return [key, null];
+                    const label = node.getAttribute('aria-label') || '';
+                    const labelled = node.id ? document.querySelector('label[for="' + node.id + '"]') : null;
+                    return [key, label || (labelled ? (labelled.textContent || '') : '')];
+                })"""
+        )
+        unnamed = [key for key, name in names if not name]
+        record("S33 设置控件都有可访问名", not unnamed, f"缺名: {unnamed} 全部={names}")
+        page.reload()
+        page.wait_for_function("() => window.__harnessReady === true", timeout=30000)
+
+        # ---- S34 播报不逐帧，且最终只说一次结果
+        reset("")
+        h("setComposeMode('long')")
+        page.evaluate(
+            """() => {
+                window.__liveChanges = [];
+                const node = document.querySelector('[role="status"]');
+                if (!node) { window.__liveChanges.push('<no live region>'); return }
+                window.__liveText = () => node.textContent || '';
+                const observer = new MutationObserver(() => {
+                    window.__liveChanges.push(node.textContent || '');
+                });
+                observer.observe(node, { childList: true, characterData: true, subtree: true });
+                window.__liveObserver = observer;
+            }"""
+        )
+        h("typeLive('帮我把这段构建日志从头到尾看一遍，并按时间顺序列出每一步', {delay: 25})")
+        page.wait_for_timeout(3200)
+        changes = page.evaluate(
+            """() => {
+                if (window.__liveObserver) window.__liveObserver.disconnect();
+                const seen = [];
+                for (const text of (window.__liveChanges || [])) {
+                    if (text !== '' && seen[seen.length - 1] !== text) seen.push(text);
+                }
+                return { distinct: seen, final: window.__liveText ? window.__liveText() : '' };
+            }"""
+        )
+        record(
+            "S34 播报不逐帧",
+            len(changes["distinct"]) <= 3 and changes["final"] != "",
+            f"播报变化 {len(changes['distinct'])} 次，最终={changes['final'][:40]!r}",
+        )
+        h("setComposeMode('ok')")
+        h("type('')")
+
+        # ---- S35 Esc 之后 Tab 交还给宿主
+        reset("")
+        h("typeLive('这段日志重新整理一下', {delay: 40})")
+        page.wait_for_timeout(1800)
+        before_focus = page.evaluate("() => document.activeElement ? document.activeElement.tagName : null")
+        h("press({key: 'Escape'})")
+        page.wait_for_timeout(300)
+        after_escape = page.evaluate(
+            """() => {
+                const chip = document.querySelector('[data-composer-quill="dock-suggestion"]');
+                return chip ? 'chip 仍在' : 'chip 已消失';
+            }"""
+        )
+        # A synthetic KeyboardEvent never moves focus: Tab traversal needs a trusted key.
+        page.focus('[data-composer-input]')
+        page.wait_for_timeout(100)
+        page.keyboard.press("Tab")
+        page.wait_for_timeout(300)
+        after_tab = page.evaluate(
+            """() => {
+                const editor = document.querySelector('[data-composer-input]');
+                return { stillInEditor: document.activeElement === editor, draft: window.__harness.draft() };
+            }"""
+        )
+        record(
+            "S35 Esc 之后 Tab 交还宿主",
+            after_escape == "chip 已消失" and not after_tab["stillInEditor"],
+            f"Esc 后 {after_escape}；Tab 后仍在输入框={after_tab['stillInEditor']} 焦点原在 {before_focus}",
+        )
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()

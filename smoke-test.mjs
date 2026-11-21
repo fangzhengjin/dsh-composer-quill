@@ -1821,6 +1821,39 @@ group('host: preflight')
 }
 
 
+group('client: a11y')
+
+{
+  const api = globalThis.__ghostFactory.factory((name) => {
+    if (name === 'react') return fakeReact
+    throw new Error(`unexpected require(${name})`)
+  }).__test
+
+  const t = (key) => ({
+    'hint.error': '建议失败',
+    'status.prefix': '建议：',
+    'hint.pending': '补写中…',
+  }[key] ?? key)
+
+  check('a failure is announced with its reason', () => {
+    assert.equal(api.describeAnnouncement({ t, status: '', failure: 'model call failed', busy: false }), '建议失败：model call failed')
+  })
+
+  check('a settled suggestion is announced once, truncated', () => {
+    const long = '一'.repeat(200)
+    const said = api.describeAnnouncement({ t, status: long, failure: '', busy: false })
+    assert.equal(said.startsWith('建议：'), true)
+    assert.equal(said.length, '建议：'.length + 60)
+  })
+
+  check('waiting is announced only when nothing is settled', () => {
+    assert.equal(api.describeAnnouncement({ t, status: '', failure: '', busy: true }), '补写中…')
+    assert.equal(api.describeAnnouncement({ t, status: '有建议', failure: '', busy: true }), '建议：有建议')
+    assert.equal(api.describeAnnouncement({ t, status: '', failure: '', busy: false }), '')
+  })
+}
+
+
 const summary = [
   '',
   `${passed} passed`,

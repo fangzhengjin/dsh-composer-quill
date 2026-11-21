@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.28'
+    const BUILD = '0.31.29'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -252,6 +252,20 @@ const COVERED_DEBOUNCE_MS = 1200
     const IDLE = Object.freeze({
       sessionId: null, phase: 'idle', kind: 'next', items: [], index: 0, error: null, forDraft: '', requested: null,
     })
+
+    /**
+     * What a screen reader should hear. Pure, so the transitions are testable:
+     * failure first, then a settled suggestion, then "working".
+     */
+    function describeAnnouncement(input) {
+      const t = input?.t ?? ((key) => key)
+      const failure = typeof input?.failure === 'string' ? input.failure : ''
+      const status = typeof input?.status === 'string' ? input.status : ''
+      if (failure !== '') return `${t('hint.error')}：${failure.slice(0, 80)}`
+      if (status !== '') return `${t('status.prefix')}${status.slice(0, 60)}`
+      if (input?.busy === true) return t('hint.pending')
+      return ''
+    }
 
     /**
      * A suggestion is a non-empty string or it is nothing. Both transports go through
@@ -2237,6 +2251,22 @@ const COVERED_DEBOUNCE_MS = 1200
         && draftEmpty
         && state.phase === 'loading'
       const pendingAny = pendingCompose || pendingNext
+      // A screen reader should hear the outcome once, not every streamed delta.
+      const [announcement, setAnnouncement] = React.useState('')
+      const announceTimer = React.useRef(null)
+      React.useEffect(() => {
+        if (announceTimer.current !== null) clearTimeout(announceTimer.current)
+        announceTimer.current = setTimeout(() => {
+          announceTimer.current = null
+          setAnnouncement(describeAnnouncement({ t, status: statusText, failure: failureText, busy: pendingAny || running }))
+        }, 500)
+        return () => {
+          if (announceTimer.current !== null) {
+            clearTimeout(announceTimer.current)
+            announceTimer.current = null
+          }
+        }
+      }, [statusText, failureText, pendingAny, running])
       // An already generated suggestion survives the next request. Keeping it in
       // the row means the user never sees their completion simply disappear.
       const heldText = state.sessionId === sessionId
@@ -2351,7 +2381,7 @@ const COVERED_DEBOUNCE_MS = 1200
             clipPath: 'inset(50%)',
             whiteSpace: 'nowrap',
           },
-        }, `${t('status.prefix')}${statusText || failureText || (heldText !== '' ? `${heldText}　·　${t('hint.pending')}` : pendingAny ? t('hint.pending') : '')}`))
+        }, announcement))
     }
 
     /** Settings → General: on/off, automatic or manual, pause and timeout. */
@@ -2405,6 +2435,7 @@ const COVERED_DEBOUNCE_MS = 1200
         h('span', { style: labelStyle }, t('settings.mode')),
         h('select', {
           'data-composer-quill': 'settings-mode',
+          'aria-label': t('settings.mode'),
           value: settings.mode,
           disabled: !enabled,
           onChange: (event) => config.set({ mode: event.target.value }),
@@ -2415,6 +2446,7 @@ const COVERED_DEBOUNCE_MS = 1200
         h('span', { style: labelStyle }, t('settings.language')),
         h('select', {
           'data-composer-quill': 'settings-language',
+          'aria-label': t('settings.language'),
           value: settings.language,
           disabled: !enabled,
           onChange: (event) => config.set({ language: event.target.value }),
@@ -2426,6 +2458,7 @@ const COVERED_DEBOUNCE_MS = 1200
         h('span', { style: labelStyle }, t('settings.debounce')),
         h('input', {
           'data-composer-quill': 'settings-debounce',
+          'aria-label': t('settings.debounce'),
           type: 'number',
           min: 80,
           max: 2000,
@@ -2438,6 +2471,7 @@ const COVERED_DEBOUNCE_MS = 1200
         h('span', { style: labelStyle }, t('settings.timeout')),
         h('input', {
           'data-composer-quill': 'settings-timeout',
+          'aria-label': t('settings.timeout'),
           type: 'number',
           min: 3000,
           max: 60000,
@@ -2513,6 +2547,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

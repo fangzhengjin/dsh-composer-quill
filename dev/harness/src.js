@@ -130,6 +130,21 @@ async function main() {
   const editor = document.querySelector('[data-composer-input]')
   const root = createRoot(document.getElementById('dock'))
 
+  // The settings row is registered on its own slot: mount it on demand.
+  function showSettings() {
+    const entry = registered.find((item) => item.options.name === 'settings.general.item')
+    if (!entry) return false
+    let host = document.getElementById('settings-host')
+    if (!host) {
+      host = document.createElement('div')
+      host.id = 'settings-host'
+      document.body.appendChild(host)
+    }
+    const face = entry.options.inject ? entry.options.inject() : {}
+    createRoot(host).render(React.createElement(entry.component, { ...face, t }))
+    return true
+  }
+
   function render(draft, sessionId = 's-harness') {
     root.render(React.createElement(dockEntry.component, {
       session: { sessionId, running: false, blank: false },
@@ -259,6 +274,7 @@ async function main() {
     setLearning(map) {
       window.localStorage.setItem('dsh.composer-quill.learning', JSON.stringify(map))
     },
+    showSettings,
     clearSuggestions() {
       window.localStorage.removeItem('dsh.composer-quill.suggestions')
     },
