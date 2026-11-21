@@ -1873,7 +1873,31 @@ group('client: booking')
   }).__test
 
   check('a new booking remembers nothing', () => {
-    assert.deepEqual(api.createDockBooking(), { painted: '', covered: '', hadDraft: false })
+    assert.deepEqual(api.createDockBooking(), { painted: '', covered: '', hadDraft: false, dismissed: null, switched: null })
+  })
+
+  check('a dismissal belongs to one draft and survives an unrelated one', () => {
+    const dismissed = api.dockReducer(api.createDockBooking(), { type: 'dismissed', draft: '草稿' })
+    assert.equal(dismissed.dismissed, '草稿')
+    // Typing something else does not un-dismiss the old draft.
+    assert.equal(api.dockReducer(dismissed, { type: 'typed' }).dismissed, '草稿')
+    assert.equal(api.dockReducer(dismissed, { type: 'undismissed' }).dismissed, null)
+  })
+
+  check('emptying the composer clears dismissal and the typed flag together', () => {
+    let booking = api.dockReducer(api.createDockBooking(), { type: 'typed' })
+    booking = api.dockReducer(booking, { type: 'dismissed', draft: '草稿' })
+    const emptied = api.dockReducer(booking, { type: 'composer-empty' })
+    assert.equal(emptied.dismissed, null)
+    assert.equal(emptied.hadDraft, false)
+    // A plain 'cleared' (turn end) must not touch the dismissal.
+    assert.equal(api.dockReducer(booking, { type: 'cleared' }).dismissed, '草稿')
+  })
+
+  check('a switch transition settles once', () => {
+    const started = api.dockReducer(api.createDockBooking(), { type: 'switch-started', draft: '旧草稿' })
+    assert.equal(started.switched, '旧草稿')
+    assert.equal(api.dockReducer(started, { type: 'switch-settled' }).switched, null)
   })
 
   check('the same fact twice keeps the same object', () => {

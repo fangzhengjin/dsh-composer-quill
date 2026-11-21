@@ -4,6 +4,24 @@
 
 ## 0.31.x
 
+### 0.31.35
+第 5 步收口：`dismissedDraft` 与 `switchDraft` 并进 `dockReducer`。
+
+`dockReducer` 的状态从三个字段变成五个：
+
+| 字段 | 含义 |
+|---|---|
+| `painted` / `covered` | 同一条建议是否已经画过 / 是否仍覆盖当前草稿 |
+| `hadDraft` | 这个输入框里打过字 |
+| `dismissed` | 用户按 `Esc` 关掉的是哪份草稿 |
+| `switched` | 正在等待结算的会话切换 |
+
+动作加了四个：`dismissed` / `undismissed` / `switch-started` / `switch-settled`，另加一个 `composer-empty`——清空输入框时**同时**清掉 `dismissed` 与 `hadDraft`，但**不动** `painted`/`covered`。
+
+这里有个容易做错的地方：原来「回合结束」也会写 `hadDraft = false`，但它**不能**顺手清掉 `dismissed`——用户按过 `Esc` 的那份草稿，在回合结束后依然是他明确拒绝过的。所以两个动作分开：`cleared` 只清 `hadDraft`，`composer-empty` 两个都清。有单测守着这条区别。
+
+单测 106 → 109（新增：一次拒绝属于一份草稿、清空时两个标志一起清、切换只结算一次），场景 39/39。
+
 ### 0.31.34
 `request()` 的最后一步：两条发送路径各自成函数。
 

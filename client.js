@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.34'
+    const BUILD = '0.31.35'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -333,7 +333,7 @@ const COVERED_DEBOUNCE_MS = 1200
      * without React.
      */
     function createDockBooking() {
-      return { painted: '', covered: '', hadDraft: false }
+      return { painted: '', covered: '', hadDraft: false, dismissed: null, switched: null }
     }
 
     function dockReducer(booking, action) {
@@ -348,6 +348,20 @@ const COVERED_DEBOUNCE_MS = 1200
           return booking.hadDraft ? booking : { ...booking, hadDraft: true }
         case 'cleared':
           return booking.hadDraft ? { ...booking, hadDraft: false } : booking
+          case 'dismissed':
+            return booking.dismissed === action.draft ? booking : { ...booking, dismissed: action.draft }
+          case 'undismissed':
+            return booking.dismissed === null ? booking : { ...booking, dismissed: null }
+          case 'switch-started':
+            return booking.switched === action.draft ? booking : { ...booking, switched: action.draft }
+          case 'switch-settled':
+            return booking.switched === null ? booking : { ...booking, switched: null }
+          case 'composer-empty':
+            // Emptied on purpose: forget the dismissal and the "has typed here" flag,
+            // keep the paint/cover bookkeeping.
+            return booking.dismissed === null && booking.hadDraft === false
+              ? booking
+              : { ...booking, dismissed: null, hadDraft: false }
         default:
           return booking
       }
@@ -1563,8 +1577,6 @@ const COVERED_DEBOUNCE_MS = 1200
       const previous = React.useRef(null)
       const timer = React.useRef(null)
       const composing = React.useRef(false)
-      const dismissedDraft = React.useRef(null)
-      const switchDraft = React.useRef(null)
       const beaconSent = React.useRef(false)
       const lastRequested = React.useRef(null)
       const retriedFor = React.useRef(null)
@@ -1857,7 +1869,7 @@ const COVERED_DEBOUNCE_MS = 1200
               phase: stored.phase,
               requested: stored.requested,
             },
-            dismissed: dismissedDraft.current,
+            dismissed: dockBooking.current.dismissed,
           })
           const draftNow = verdict.draftNow
           for (const effect of verdict.effects) {
@@ -1902,7 +1914,7 @@ const COVERED_DEBOUNCE_MS = 1200
         }
         if (prior.sessionId !== sessionId) {
           composing.current = false
-          dismissedDraft.current = null
+          sendDock({ type: 'undismissed' })
           hydratedFor.current = ''
           // Claims belong to the previous Session: with them in place the first
           // draft here would be skipped as "already requested".
@@ -1915,7 +1927,7 @@ const COVERED_DEBOUNCE_MS = 1200
           sendDock({ type: 'cleared' })
           // The composer still carries the previous Session's draft until the
           // host swaps it: never ask for a proposal on someone else's text.
-          switchDraft.current = latest.current.draft
+          sendDock({ type: 'switch-started', draft: latest.current.draft })
           // Hydrate first, while the store is untouched: coming back to a Session
           // whose conversation has not moved is not a new question, and asking the
           // model again would show "补写中…" for something already known.
@@ -1970,7 +1982,7 @@ const COVERED_DEBOUNCE_MS = 1200
           // next-message prediction instead of leaving the composer silent.
           if (draft === '' && dockBooking.current.hadDraft) {
             sendDock({ type: 'cleared' })
-            dismissedDraft.current = null
+            sendDock({ type: 'undismissed' })
             lastRequested.current = null
             // Drop the accepted proposal before asking for a fresh prediction.
             ghost.clear(sessionId)
@@ -1981,14 +1993,14 @@ const COVERED_DEBOUNCE_MS = 1200
           }
           return
         }
-        if (dismissedDraft.current === draft) return
+        if (dockBooking.current.dismissed === draft) return
         // Right after an accept the draft is exactly what was just applied: it was
         // already answered, so do not pay for another model call on it. Any other
         // text is a new draft and must be requested.
         if (lastRequested.current === draft) return
-        if (switchDraft.current !== null) {
-          if (draft === switchDraft.current) return
-          switchDraft.current = null
+        if (dockBooking.current.switched !== null) {
+          if (draft === dockBooking.current.switched) return
+          sendDock({ type: 'switch-settled' })
         }
         if (composing.current) return
         // A response for an older draft is already useless: drop it now instead
@@ -2037,12 +2049,12 @@ const COVERED_DEBOUNCE_MS = 1200
           if (composing.current) return
           const text = domDraft()
           if (text.trim().length < MIN_DRAFT_CHARS) return
-          if (switchDraft.current !== null) {
-            if (text === switchDraft.current) return
-            switchDraft.current = null
+          if (dockBooking.current.switched !== null) {
+            if (text === dockBooking.current.switched) return
+            sendDock({ type: 'switch-settled' })
           }
           if (text === lastRequested.current) return
-          if (dismissedDraft.current === text) return
+          if (dockBooking.current.dismissed === text) return
           const pending = ghost.getSnapshot()
           if (pending.phase !== 'idle' && pending.forDraft === text) return
           // The draft still sits inside the proposal on screen: the draft effect has
@@ -2125,7 +2137,7 @@ const COVERED_DEBOUNCE_MS = 1200
       // the gap instantly (no request, no debounce).
       const historyMatch = enabled && !running && !nextActive && !composeActive
         && history.sessionId === sessionId
-        && dismissedDraft.current !== draft && dismissedDraft.current !== draftBase
+        && dockBooking.current.dismissed !== draft && dockBooking.current.dismissed !== draftBase
         ? bestHistoryMatch(history.items, draftBase)
         : null
       const historyActive = historyMatch !== null
@@ -2156,7 +2168,7 @@ const COVERED_DEBOUNCE_MS = 1200
             shown.consumed = true
             recordOutcome(shown.features, true)
           }
-          dismissedDraft.current = null
+          sendDock({ type: 'undismissed' })
           // Remember the draft the accept produced, so the safety net does not
           // immediately re-ask for the text that was just applied.
           lastRequested.current = applied
@@ -2352,7 +2364,7 @@ const COVERED_DEBOUNCE_MS = 1200
             if (visible) {
               event.preventDefault()
               event.stopPropagation()
-              if (latest.current.draft.trim() !== '') dismissedDraft.current = latest.current.draft
+              if (latest.current.draft.trim() !== '') sendDock({ type: 'dismissed', draft: latest.current.draft })
               dismissAll()
             }
             return
