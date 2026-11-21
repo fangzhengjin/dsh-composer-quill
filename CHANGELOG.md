@@ -4,6 +4,22 @@
 
 ## 0.31.x
 
+### 0.31.37
+拆分 `GhostDock` 第二批：画灰字与按键各自成 hook。
+
+| 新 hook | 行数 | 搬走了什么 |
+|---|---|---|
+| `useGhostPaint` | 96 | `overlayBlocking()`（灰字不许画到对话框上）、`paint()`（caret / box / 不画三选一）、结构键与 paint 上报、六个监听器的挂与卸 |
+| `useComposerKeys` | 65 | `inEditor` 判定、IME 组字抑制、`Ctrl+Shift+Space` 手动触发、Enter / Esc / Tab / 方向键、六个监听器的挂与卸 |
+
+`GhostDock` 918 → **762 行**；三批累计 999 → 762。
+
+两条依赖数组逐字未动：`[visible, ghost, ghostLayer]` 与 `[visible, nextActive, items.length, ghost, ghostLayer, dismissAll]`。这两条最容易被「顺手整理」掉，而它们决定了监听器何时重挂——挂了不重挂，症状是「Tab 偶尔失灵」。
+
+`paintData`、`dockBooking`、`acceptRef`、`latest`、`lastRequested` 都是 ref（身份稳定），`sendDock` 来自 `useReducer` 的 dispatch，`request` 是 `useCallback([stopTimer, ghost, composeStream, nextJson])`——所以首帧捕获安全。
+
+单测 109、场景 39/39（连跑两次），行为无变化。
+
 ### 0.31.36
 拆分 `GhostDock` 的第一批：三块纯读逻辑各自成 hook。
 

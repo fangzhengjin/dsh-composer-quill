@@ -1,0 +1,12 @@
+refactor(client): paint and keys out of GhostDock
+
+- useGhostPaint（96 行）：overlayBlocking、paint 三选一、结构键与上报、六个监听器
+- useComposerKeys（65 行）：inEditor、IME 抑制、手动触发、Enter/Esc/Tab/方向键、六个监听器
+- GhostDock 918 → 762 行（三批累计 999 → 762）
+
+两条依赖数组逐字未动：[visible, ghost, ghostLayer] 与
+[visible, nextActive, items.length, ghost, ghostLayer, dismissAll]。
+paintData / dockBooking / acceptRef / latest / lastRequested 都是 ref，
+sendDock 是 dispatch，request 是 useCallback，首帧捕获安全。
+
+单测 109、场景 39/39（连跑两次）。版本 0.31.37。

@@ -1,6 +1,6 @@
 # GhostDock 拆分方案（待确认）
 
-> **状态：第一批（A+B+C）已在 0.31.36 落地。** 本文记录剩余单元（D/E/F）与三条约束。
+> **状态：A+B+C 在 0.31.36、D+E 在 0.31.37 落地；只剩 F（请求机器）。** 本文记录剩余单元与三条约束。
 
 ## 0. 先说结论：没有「视觉区块」可拆
 
@@ -54,7 +54,9 @@ return h(React.Fragment, null,
 
 预估 866 与实际的差别在于：hook 本身要带注释与签名，而被搬走的 effect 体比按区段粗算的短一些。
 
-再加 D+E 预计降到 **约 726**；F 搬走才到 **约 492**。
+D+E 实际结果：918 → **762 行**（`useGhostPaint` 96 行、`useComposerKeys` 65 行）。
+
+F 搬走预计到 **约 528 行**（request/composeStream/nextJson 三个 useCallback 加上四个 effect）。
 
 ## 3. 三条必须遵守的约束
 

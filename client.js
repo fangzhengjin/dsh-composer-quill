@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.36'
+    const BUILD = '0.31.37'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -1646,6 +1646,183 @@ const COVERED_DEBOUNCE_MS = 1200
       return { history, historyRef, bumpHistoryEpoch: () => setEpoch((value) => value + 1) }
     }
 
+    /**
+     * Paints the inline ghost and keeps it in sync with the composer: streamed text,
+     * resizes, caret moves, and dialogs that cover it.
+     */
+    function useGhostPaint(input) {
+      const { visible, ghost, ghostLayer, paintData, dockBooking, sendDock, report } = input
+    // Paint the inline ghost while something is visible.
+    React.useEffect(() => {
+      if (!visible) {
+        ghostLayer.clear()
+        return undefined
+      }
+    const overlayBlocking = () => {
+      // The layer is fixed with a high z-index: without this it painted grey text
+      // over dialogs opened from the sidebar. A dialog that contains the composer
+      // itself (some hosts nest it) must not count.
+      const editor = editorEl()
+      const dialogs = typeof document.querySelectorAll === 'function'
+  ? document.querySelectorAll('[aria-modal="true"], [role="dialog"], [role="alertdialog"]')
+  : []
+      for (const node of dialogs) {
+        if (editor !== null && node.contains(editor)) continue
+        const rect = node.getBoundingClientRect()
+        if (rect.width > 0 && rect.height > 0) return true
+      }
+      return false
+    }
+      const paint = () => {
+        if (overlayBlocking()) {
+          ghostLayer.clear()
+          return
+        }
+        const data = paintData.current
+        let anchor = 'none'
+        if (data.nextActive) {
+          anchor = 'box'
+          ghostLayer.render({ inlineText: data.current, anchor: 'box' })
+        } else if (((data.composeActive && data.proposalIsTail) || data.historyActive) && caretAtEnd()) {
+          anchor = 'caret'
+          ghostLayer.render({ inlineText: data.proposal, anchor: 'caret' })
+        } else {
+          // A rewrite of existing text has no single insertion point: it is
+          // previewed in the dock row and applied as a whole draft.
+          ghostLayer.render({ inlineText: '' })
+        }
+        // Structural only: the proposal text changes on every streamed delta.
+        // Keying on the text meant one POST and one log line per frame.
+        const paintKey = `${data.kind}|${data.forDraft}|${anchor}`
+        if (dockBooking.current.painted !== paintKey) {
+          sendDock({ type: 'painted', key: paintKey })
+          report('paint', {
+            sessionId: data.sessionId,
+            draftLength: data.draftLength,
+            // The proposal is the user's own text; a length cannot leak a draft.
+            detail: JSON.stringify({ anchor, proposalChars: String(data.proposal).length, ...ghostLayer.debug() }),
+          })
+        }
+      }
+      paint()
+    const onFocusChange = () => {
+      if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(paint)
+      else paint()
+    }
+    document.addEventListener('focusin', onFocusChange, true)
+    document.addEventListener('focusout', onFocusChange, true)
+      if (typeof ResizeObserver !== 'function' || typeof MutationObserver !== 'function') return undefined
+      let frame = null
+      const schedulePaint = () => {
+        if (frame !== null) return
+        frame = window.requestAnimationFrame(() => {
+          frame = null
+          paint()
+        })
+      }
+      // Streamed text changes the proposal without changing visibility: without
+      // this subscription the ghost stopped at its first delta.
+      const unsubscribe = typeof ghost.subscribe === 'function' ? ghost.subscribe(schedulePaint) : () => {}
+      const resize = new ResizeObserver(schedulePaint)
+      const editor = editorEl()
+      if (editor !== null) {
+        resize.observe(editor)
+        if (editor.parentElement !== null) resize.observe(editor.parentElement)
+      }
+      // Only the composer can move the caret: watching the whole document woke
+      // this up for every streamed token elsewhere on the page.
+      const mutations = new MutationObserver(schedulePaint)
+      if (editor !== null) mutations.observe(editor, { childList: true, subtree: true, characterData: true })
+      window.addEventListener('resize', schedulePaint)
+      window.addEventListener('scroll', schedulePaint, true)
+      document.addEventListener('selectionchange', schedulePaint)
+      return () => {
+        unsubscribe()
+        mutations.disconnect()
+        resize.disconnect()
+        window.removeEventListener('resize', schedulePaint)
+        window.removeEventListener('scroll', schedulePaint, true)
+        document.removeEventListener('selectionchange', schedulePaint)
+        document.removeEventListener('focusin', onFocusChange, true)
+        document.removeEventListener('focusout', onFocusChange, true)
+        if (frame !== null) window.cancelAnimationFrame(frame)
+      }
+    }, [visible, ghost, ghostLayer])
+    }
+
+    /**
+     * Shortcuts and edit events, restricted to the composer: Tab accepts, Esc dismisses,
+     * arrows cycle, Ctrl+Shift+Space asks by hand. IME composition suppresses all of it.
+     */
+    function useComposerKeys(input) {
+      const { visible, nextActive, items, ghost, ghostLayer, dismissAll, acceptRef, composing, latest, lastRequested, request, sendDock } = input
+    // Shortcuts and edit events, restricted to the composer.
+    React.useEffect(() => {
+      const inEditor = (node) => {
+        const root = editorEl()
+        return root !== null && (node === root || root.contains(node))
+      }
+      const onEdit = (event) => {
+        // Only the composer's own IME session may suppress Tab: a composition
+        // anywhere else on the page must not disarm this plugin.
+        if (!inEditor(event.target)) return
+        if (event.type === 'compositionstart') {
+          composing.current = true
+          ghostLayer.clear()
+        }
+      }
+      const onCompositionEnd = () => { composing.current = false }
+      const onKeyDown = (event) => {
+        if (event.defaultPrevented || composing.current || event.isComposing || event.keyCode === 229) return
+        if (!inEditor(document.activeElement)) return
+        // Manual trigger: works even when automatic suggestions are off.
+        if ((event.ctrlKey || event.metaKey) && event.shiftKey && (event.code === 'Space' || event.key === ' ')) {
+          const live = latest.current
+          if (!live.enabled || live.sessionId === null || live.draft.trim().length < MIN_DRAFT_CHARS) return
+          event.preventDefault()
+          event.stopPropagation()
+          // Claim this draft: leaving it null lets the 700 ms safety net
+          // cancel and restart the request we just started.
+          lastRequested.current = live.draft
+          request('compose', live.draft)
+          return
+        }
+        if (event.key === 'Enter') { dismissAll(); return }
+        if (event.key === 'Escape') {
+          if (visible) {
+            event.preventDefault()
+            event.stopPropagation()
+            if (latest.current.draft.trim() !== '') sendDock({ type: 'dismissed', draft: latest.current.draft })
+            dismissAll()
+          }
+          return
+        }
+        if (!visible) return
+        if (event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+          if (acceptRef.current(true)) {
+            event.preventDefault()
+            event.stopPropagation()
+          }
+          return
+        }
+        if (nextActive && items.length > 1 && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+          event.preventDefault()
+          event.stopPropagation()
+          ghost.cycle(event.key === 'ArrowRight' ? 1 : -1)
+        }
+      }
+      const editEvents = ['beforeinput', 'input', 'paste', 'drop', 'compositionstart']
+      for (const type of editEvents) window.addEventListener(type, onEdit, true)
+      window.addEventListener('compositionend', onCompositionEnd, true)
+      window.addEventListener('keydown', onKeyDown, true)
+      return () => {
+        for (const type of editEvents) window.removeEventListener(type, onEdit, true)
+        window.removeEventListener('compositionend', onCompositionEnd, true)
+        window.removeEventListener('keydown', onKeyDown, true)
+      }
+    }, [visible, nextActive, items.length, ghost, ghostLayer, dismissAll])
+    }
+
     function GhostDock(props) {
       const { session, input, inputActions, t } = props
       const ghost = props.ghost ?? idleGhost()
@@ -2309,168 +2486,12 @@ const COVERED_DEBOUNCE_MS = 1200
         sessionId,
       }
 
-      // Paint the inline ghost while something is visible.
-      React.useEffect(() => {
-        if (!visible) {
-          ghostLayer.clear()
-          return undefined
-        }
-      const overlayBlocking = () => {
-        // The layer is fixed with a high z-index: without this it painted grey text
-        // over dialogs opened from the sidebar. A dialog that contains the composer
-        // itself (some hosts nest it) must not count.
-        const editor = editorEl()
-        const dialogs = typeof document.querySelectorAll === 'function'
-    ? document.querySelectorAll('[aria-modal="true"], [role="dialog"], [role="alertdialog"]')
-    : []
-        for (const node of dialogs) {
-          if (editor !== null && node.contains(editor)) continue
-          const rect = node.getBoundingClientRect()
-          if (rect.width > 0 && rect.height > 0) return true
-        }
-        return false
-      }
-        const paint = () => {
-          if (overlayBlocking()) {
-            ghostLayer.clear()
-            return
-          }
-          const data = paintData.current
-          let anchor = 'none'
-          if (data.nextActive) {
-            anchor = 'box'
-            ghostLayer.render({ inlineText: data.current, anchor: 'box' })
-          } else if (((data.composeActive && data.proposalIsTail) || data.historyActive) && caretAtEnd()) {
-            anchor = 'caret'
-            ghostLayer.render({ inlineText: data.proposal, anchor: 'caret' })
-          } else {
-            // A rewrite of existing text has no single insertion point: it is
-            // previewed in the dock row and applied as a whole draft.
-            ghostLayer.render({ inlineText: '' })
-          }
-          // Structural only: the proposal text changes on every streamed delta.
-          // Keying on the text meant one POST and one log line per frame.
-          const paintKey = `${data.kind}|${data.forDraft}|${anchor}`
-          if (dockBooking.current.painted !== paintKey) {
-            sendDock({ type: 'painted', key: paintKey })
-            report('paint', {
-              sessionId: data.sessionId,
-              draftLength: data.draftLength,
-              // The proposal is the user's own text; a length cannot leak a draft.
-              detail: JSON.stringify({ anchor, proposalChars: String(data.proposal).length, ...ghostLayer.debug() }),
-            })
-          }
-        }
-        paint()
-      const onFocusChange = () => {
-        if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(paint)
-        else paint()
-      }
-      document.addEventListener('focusin', onFocusChange, true)
-      document.addEventListener('focusout', onFocusChange, true)
-        if (typeof ResizeObserver !== 'function' || typeof MutationObserver !== 'function') return undefined
-        let frame = null
-        const schedulePaint = () => {
-          if (frame !== null) return
-          frame = window.requestAnimationFrame(() => {
-            frame = null
-            paint()
-          })
-        }
-        // Streamed text changes the proposal without changing visibility: without
-        // this subscription the ghost stopped at its first delta.
-        const unsubscribe = typeof ghost.subscribe === 'function' ? ghost.subscribe(schedulePaint) : () => {}
-        const resize = new ResizeObserver(schedulePaint)
-        const editor = editorEl()
-        if (editor !== null) {
-          resize.observe(editor)
-          if (editor.parentElement !== null) resize.observe(editor.parentElement)
-        }
-        // Only the composer can move the caret: watching the whole document woke
-        // this up for every streamed token elsewhere on the page.
-        const mutations = new MutationObserver(schedulePaint)
-        if (editor !== null) mutations.observe(editor, { childList: true, subtree: true, characterData: true })
-        window.addEventListener('resize', schedulePaint)
-        window.addEventListener('scroll', schedulePaint, true)
-        document.addEventListener('selectionchange', schedulePaint)
-        return () => {
-          unsubscribe()
-          mutations.disconnect()
-          resize.disconnect()
-          window.removeEventListener('resize', schedulePaint)
-          window.removeEventListener('scroll', schedulePaint, true)
-          document.removeEventListener('selectionchange', schedulePaint)
-          document.removeEventListener('focusin', onFocusChange, true)
-          document.removeEventListener('focusout', onFocusChange, true)
-          if (frame !== null) window.cancelAnimationFrame(frame)
-        }
-      }, [visible, ghost, ghostLayer])
+      useGhostPaint({ visible, ghost, ghostLayer, paintData, dockBooking, sendDock, report })
 
-      // Shortcuts and edit events, restricted to the composer.
-      React.useEffect(() => {
-        const inEditor = (node) => {
-          const root = editorEl()
-          return root !== null && (node === root || root.contains(node))
-        }
-        const onEdit = (event) => {
-          // Only the composer's own IME session may suppress Tab: a composition
-          // anywhere else on the page must not disarm this plugin.
-          if (!inEditor(event.target)) return
-          if (event.type === 'compositionstart') {
-            composing.current = true
-            ghostLayer.clear()
-          }
-        }
-        const onCompositionEnd = () => { composing.current = false }
-        const onKeyDown = (event) => {
-          if (event.defaultPrevented || composing.current || event.isComposing || event.keyCode === 229) return
-          if (!inEditor(document.activeElement)) return
-          // Manual trigger: works even when automatic suggestions are off.
-          if ((event.ctrlKey || event.metaKey) && event.shiftKey && (event.code === 'Space' || event.key === ' ')) {
-            const live = latest.current
-            if (!live.enabled || live.sessionId === null || live.draft.trim().length < MIN_DRAFT_CHARS) return
-            event.preventDefault()
-            event.stopPropagation()
-            // Claim this draft: leaving it null lets the 700 ms safety net
-            // cancel and restart the request we just started.
-            lastRequested.current = live.draft
-            request('compose', live.draft)
-            return
-          }
-          if (event.key === 'Enter') { dismissAll(); return }
-          if (event.key === 'Escape') {
-            if (visible) {
-              event.preventDefault()
-              event.stopPropagation()
-              if (latest.current.draft.trim() !== '') sendDock({ type: 'dismissed', draft: latest.current.draft })
-              dismissAll()
-            }
-            return
-          }
-          if (!visible) return
-          if (event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
-            if (acceptRef.current(true)) {
-              event.preventDefault()
-              event.stopPropagation()
-            }
-            return
-          }
-          if (nextActive && items.length > 1 && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
-            event.preventDefault()
-            event.stopPropagation()
-            ghost.cycle(event.key === 'ArrowRight' ? 1 : -1)
-          }
-        }
-        const editEvents = ['beforeinput', 'input', 'paste', 'drop', 'compositionstart']
-        for (const type of editEvents) window.addEventListener(type, onEdit, true)
-        window.addEventListener('compositionend', onCompositionEnd, true)
-        window.addEventListener('keydown', onKeyDown, true)
-        return () => {
-          for (const type of editEvents) window.removeEventListener(type, onEdit, true)
-          window.removeEventListener('compositionend', onCompositionEnd, true)
-          window.removeEventListener('keydown', onKeyDown, true)
-        }
-      }, [visible, nextActive, items.length, ghost, ghostLayer, dismissAll])
+      useComposerKeys({
+        visible, nextActive, items, ghost, ghostLayer, dismissAll, acceptRef,
+        composing, latest, lastRequested, request, sendDock,
+      })
 
       // A permanently visible row: a proposal, a pending note, or the key hints.
       // It keeps a fixed height so the composer never jumps as states change.
