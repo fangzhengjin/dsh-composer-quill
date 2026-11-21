@@ -37,3 +37,5 @@ __pycache__/
 !assets/
 !assets/*.png
 !screenshots.json
+# 抖动记账：本地状态，不进仓库
+dev/flake-ledger.json
