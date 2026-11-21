@@ -61,9 +61,11 @@ const MAX_NORMALIZED_CHARS = 8000
 const MAX_TOKENS = 1200
 // A cache key already contains the Session, the transcript version, the model, the
 // language and the browser's turn counter: if all of that is unchanged the answer is
-// still the answer, and re-sampling it costs money for nothing. Expiry is therefore
-// long; the size cap is what bounds memory, and the negative cache stays short.
-const CACHE_TTL_MS = 24 * 60 * 60_000
+// still the answer, and re-sampling it costs money for nothing. Two minutes covers the
+// "edit it, change your mind, come back" rhythm of one turn; anything longer keeps a
+// suggestion (the user's own draft, continued) on disk for no real gain, because a
+// restart usually changes the epoch and misses anyway. The negative cache is shorter.
+const CACHE_TTL_MS = 2 * 60_000
 const REQUEST_TIMEOUT_MS = 30_000
 const MAX_BODY_BYTES = 48 * 1024
 const ABORTED = Symbol('composer-quill.aborted')
@@ -864,6 +866,14 @@ function withAbort(promise, signal) {
 
 const cache = new Map()
 
+/** Fixed-size LRU: memory and disk agree on the same capacity. */
+const CACHE_CAPACITY = 64
+
+/** True while an entry is inside its own window. Shared by memory and disk. */
+function fresh(entry, now = Date.now()) {
+  return now - entry.at <= (entry.ttl ?? CACHE_TTL_MS)
+}
+
 /** Negative outcomes are cheap to recompute and must not pin a draft for minutes. */
 const NEGATIVE_TTL_MS = 10_000
 
@@ -921,7 +931,11 @@ function cacheKey(sessionId, mode, draft, events, route, language = '', epoch = 
 function cached(key) {
   const hit = cache.get(key)
   if (hit === undefined) return undefined
-  if (Date.now() - hit.at > (hit.ttl ?? CACHE_TTL_MS)) { cache.delete(key); return undefined }
+  if (!fresh(hit)) { cache.delete(key); return undefined }
+  // A hit is a use: move it to the back so the sweep drops what is actually cold.
+  // No save is scheduled — reordering is not new information.
+  cache.delete(key)
+  cache.set(key, hit)
   return hit.value
 }
 
@@ -955,7 +969,7 @@ function scheduleCacheSave() {
       const temp = `${file}.${process.pid}.tmp`
       // Writing is off the hot path, but a few hundred kilobytes of sync IO still
       // blocks every Session: hand it to the thread pool.
-      void writeFileAsync(temp, JSON.stringify({ version: 1, entries: entries.slice(-64) }), 'utf8')
+      void writeFileAsync(temp, JSON.stringify({ version: 1, entries: entries.slice(-CACHE_CAPACITY) }), 'utf8')
         .then(() => renameAsync(temp, file))
         .catch(() => {})
     } catch {
@@ -983,8 +997,8 @@ function loadCache() {
       // NaN comparisons are always false, which would make a corrupt entry both
       // immortal and permanently matching.
       if (!Number.isFinite(at) || !Number.isFinite(ttl)) continue
-      if (now - at > ttl) continue
-      if (loaded >= 128) break
+      if (!fresh(value, now)) continue
+      if (loaded >= CACHE_CAPACITY) break
       cache.set(key, value)
       loaded += 1
     }
@@ -999,12 +1013,12 @@ function remember(key, value, ttl) {
   // burst of drafts cannot evict everything that is still fresh.
   const now = Date.now()
   for (const [entryKey, entry] of cache) {
-    if (now - entry.at > (entry.ttl ?? CACHE_TTL_MS)) cache.delete(entryKey)
+    if (!fresh(entry, now)) cache.delete(entryKey)
   }
-  // Map iterates in insertion order: drop the oldest entries first, never the
-  // one that was just written.
+  // With a hit moving its entry to the back, insertion order is recency order:
+  // the first key is the least recently used one.
   for (const entryKey of cache.keys()) {
-    if (cache.size <= 128) break
+    if (cache.size < CACHE_CAPACITY) break
     cache.delete(entryKey)
   }
   cache.set(key, { at: now, value, ttl })
@@ -1720,7 +1734,8 @@ function historyOf(events, limit = 200) {
     if (text.length > HISTORY_ITEM_MAX_CHARS) text = Array.from(text).slice(0, HISTORY_ITEM_MAX_CHARS).join('')
     const key = text.trim()
     if (key.length < 1) continue
-    collected.push({ text: key, at: typeof event.at === 'string' ? event.at : null })
+    // Session events carry `time` (epoch ms); `at` never existed, so every row said null.
+        collected.push({ text: key, at: typeof event.time === 'number' ? new Date(event.time).toISOString() : null })
   }
   // Keep the last occurrence of each message: a reuse is more likely than the
   // original, and this stays linear in the number of messages.
@@ -1889,7 +1904,7 @@ export function apply(ctx) {
 }
 
 /** Pure helpers exposed for the offline smoke test. */
-export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt }
+export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY }
 
 
 

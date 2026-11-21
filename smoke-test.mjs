@@ -1717,6 +1717,49 @@ group('client: items')
 }
 
 
+group('host: cache window')
+
+{
+  const api = host.__test
+
+  check('the window is two minutes', () => {
+    assert.equal(api.CACHE_TTL_MS, 120_000)
+    assert.equal(api.CACHE_CAPACITY, 64)
+  })
+
+  check('an entry older than the window is stale', () => {
+    const now = Date.now()
+    assert.equal(api.fresh({ at: now - 60_000 }, now), true)
+    assert.equal(api.fresh({ at: now - 3 * 60_000 }, now), false)
+    // A negative result sets its own, shorter window.
+    assert.equal(api.fresh({ at: now - 20_000, ttl: 10_000 }, now), false)
+  })
+
+  check('a hit survives the next eviction', () => {
+    process.env.DSH_COMPOSER_QUILL_NO_CACHE = '1'
+    const first = 'test-hot-key'
+    api.remember(first, { kind: 'compose', text: 'hot' })
+    for (let i = 0; i < api.CACHE_CAPACITY - 1; i += 1) {
+      api.remember('test-cold-' + i, { kind: 'compose', text: 'cold' + i })
+    }
+    // Touch the oldest entry, then push one new one over the cap.
+    assert.equal(api.cached(first)?.text, 'hot')
+    api.remember('test-newcomer', { kind: 'compose', text: 'new' })
+    assert.equal(api.cached(first)?.text, 'hot')
+    delete process.env.DSH_COMPOSER_QUILL_NO_CACHE
+  })
+
+  check('history rows carry the event time', () => {
+    const at = 1763000000000
+    const rows = api.historyOf([
+      { type: 'user/message', time: at, data: { content: [{ type: 'text', text: '先看日志' }] } },
+    ])
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].at, new Date(at).toISOString())
+  })
+}
+
+
 const summary = [
   '',
   `${passed} passed`,
