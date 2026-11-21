@@ -1,6 +1,6 @@
 # 开发与验证
 
-> 适用版本：0.31.26 ｜ 无构建步骤：宿主与浏览器两端都是手写 ESM
+> 适用版本：0.31.27 ｜ 无构建步骤：宿主与浏览器两端都是手写 ESM
 
 ## 1. 目录结构
 
@@ -23,7 +23,7 @@ dsh-composer-quill/
 
 ```
 dev/harness/         模拟器：src.js → esbuild → bundle.js（用 file:// 打开）
-dev/verify_daily.py  22 个行为场景（模拟器驱动）
+dev/verify_daily.py  36 个行为场景（模拟器驱动）
 dev/verify_*.py      真机脚本：空行锚点、设置页、刷新复用、流式重绘……
 ```
 
@@ -131,7 +131,6 @@ h("resetMetrics()")                              // 清零计数
 | `verify_reuse_reload.py` | 刷新后是否 0 请求复用已存建议 |
 | `verify_no_storm.py` / `verify_covered.py` | 请求次数（无取消风暴、覆盖区间零调用） |
 | `verify_settings_ui.py` | 设置卡片渲染与持久化 |
-| `quality_probe.py` | 固定 5 条草稿的建议质量对比（改动提示词/排序前后各跑一次，diff 输出） |
 | `verify_stream_repaint.py` | 流式期间灰字是否增长（模型吐得快时不稳定，以 S19 为准） |
 
 ## 4. 调试

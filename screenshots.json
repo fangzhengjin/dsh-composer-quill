@@ -1,1 +1,6 @@
-["docs/assets/composer.png", "docs/assets/plugin-row.png"]
+[
+  "docs/assets/real-tail.png",
+  "docs/assets/real-next.png",
+  "docs/assets/real-rewrite.png",
+  "docs/assets/real-history.png"
+]

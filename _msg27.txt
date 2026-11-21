@@ -1,0 +1,16 @@
+chore(repo): list the current screenshots and drop dead assets
+
+F 组：
+
+- screenshots.json 改指真实四张（real-tail/next/rewrite/history）；删掉两张旧截图
+  composer.png 与 plugin-row.png（已无引用）。包体 327.7 → 249.7 KB，21 → 19 个文件
+- 删 .github/RELEASE_DRAFT.md（0.31.5 的旧草稿，链着已删图片）
+- 清理 11 个一次性脚本与快照（dev/_probe*.py、fit_probe.py、quality-*.json 等）
+- 补 ### 0.30.1（只有版本号与文档更新）；更正先前误判：0.19/0.20/0.21 都有记录，
+  是按 minor 分节，不是缺条目
+- dev/README.md 与 DEVELOPMENT.md 去掉已删的 quality_probe.py，场景数 22 → 36
+
+v0.31.2 查清：指向账户改名那次提交，是自动发布之前的手工标签（同批 0.14–0.31.1），
+保持原样。
+
+版本 0.31.27。
