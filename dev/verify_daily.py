@@ -686,6 +686,26 @@ def main() -> int:
         h("setComposeMode('ok')")
         h("type('')")
 
+        # ---- S32 灰字上报不再逐帧，也不再带草案原文
+        reset("")
+        h("setComposeMode('long')")
+        h("typeLive('帮我把这段构建日志从头到尾看一遍，并按时间顺序列出每一步', {delay: 25})")
+        page.wait_for_timeout(2600)
+        beacons = page.evaluate(
+            """() => (window.__harness.calls || [])
+                .filter((call) => call.mode === 'beacon' && call.event === 'paint')
+                .map((call) => call.detail || '')"""
+        )
+        with_text = [detail for detail in beacons if '"text"' in detail]
+        with_length = [detail for detail in beacons if 'proposalChars' in detail]
+        record(
+            "S32 灰字上报不再逐帧",
+            len(beacons) <= 4 and not with_text and len(with_length) == len(beacons),
+            f"paint 上报 {len(beacons)} 次，带原文 {len(with_text)} 次，带长度 {len(with_length)} 次",
+        )
+        h("setComposeMode('ok')")
+        h("type('')")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()

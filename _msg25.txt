@@ -1,0 +1,12 @@
+perf: paint beacon reports structure, not every frame
+
+B 组三条：
+
+- paint beacon 的键里带了提案正文，流式时每帧变一次 → 一次打字几十个 POST 和日志行，
+  detail 还带提案前 60 字。改为结构键（kind|forDraft|anchor），正文只上报长度，
+  实测同一场景从「每帧」降到 4 次
+- beacon 处理器缺 finally：每请求留一个 30s 定时器和 close 监听；读超时被报成
+  「body 不是合法 JSON」。补清理，并区分「被中止」与「body 非法」
+- beacon 的 sessionId 没截断（其余字段都截了）：48KB body 能写出一行 48KB 日志
+
+场景 35 → 36（S32），单测 83 不变。版本 0.31.25。

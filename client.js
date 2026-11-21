@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.24'
+    const BUILD = '0.31.25'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -2085,13 +2085,16 @@ const COVERED_DEBOUNCE_MS = 1200
             // previewed in the dock row and applied as a whole draft.
             ghostLayer.render({ inlineText: '' })
           }
-          const key = `${data.kind}|${data.forDraft}|${data.proposal}|${anchor}`
-          if (paintedKey.current !== key) {
-            paintedKey.current = key
+          // Structural only: the proposal text changes on every streamed delta.
+          // Keying on the text meant one POST and one log line per frame.
+          const paintKey = `${data.kind}|${data.forDraft}|${anchor}`
+          if (paintedKey.current !== paintKey) {
+            paintedKey.current = paintKey
             report('paint', {
               sessionId: data.sessionId,
               draftLength: data.draftLength,
-              detail: JSON.stringify({ anchor, text: String(data.proposal).slice(0, 60), ...ghostLayer.debug() }),
+              // The proposal is the user's own text; a length cannot leak a draft.
+              detail: JSON.stringify({ anchor, proposalChars: String(data.proposal).length, ...ghostLayer.debug() }),
             })
           }
         }

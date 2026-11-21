@@ -1804,7 +1804,9 @@ async function handleBeacon(token, req, res) {
     const body = await readJson(req, controller.signal)
     trace('beacon', {
       stage: typeof body?.event === 'string' ? body.event.slice(0, 40) : 'unknown',
-      sessionId: typeof body?.sessionId === 'string' ? body.sessionId : null,
+      // Every other field here is clamped; this one used to pass through, so a
+      // 48 KB body produced one 48 KB log line.
+      sessionId: typeof body?.sessionId === 'string' ? body.sessionId.slice(0, 40) : null,
       hasSession: body?.hasSession === true,
       running: body?.running === true,
       draftChars: typeof body?.draftLength === 'number' ? body.draftLength : null,
@@ -1815,9 +1817,15 @@ async function handleBeacon(token, req, res) {
     })
     respond(res, 200, { ok: true })
   } catch (error) {
-    trace('beacon-error', { message: error instanceof Error ? error.message : String(error) })
-    respond(res, 400, { error: { code: 'invalid-request', message: 'beacon body is not valid JSON' } })
-  }
+      const aborted = error?.[ABORTED] === true
+      trace('beacon-error', { message: error instanceof Error ? error.message : String(error), aborted })
+      // An aborted read (client gone, or our own timeout) is not a malformed body.
+      if (!aborted) respond(res, 400, { error: { code: 'invalid-request', message: 'beacon body is not valid JSON' } })
+    } finally {
+      // Without this every beacon left a 30 s timer and a close listener behind.
+      clearTimeout(timeout)
+      res.off('close', onClose)
+    }
 }
 
 /**
