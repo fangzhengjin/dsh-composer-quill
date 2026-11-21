@@ -4,6 +4,25 @@
 
 ## 0.31.x
 
+### 0.31.36
+拆分 `GhostDock` 的第一批：三块纯读逻辑各自成 hook。
+
+先说结论：**没有「视觉区块」可拆**。这个组件 999 行里渲染只占 24 行（一行状态条 + 一个视觉隐藏的播报区），状态条的四种形态早在 0.31.30 就抽成了 `renderStatusChip()`。真正的体积在逻辑里，所以按职责拆。
+
+| 新 hook | 行数 | 搬走了什么 |
+|---|---|---|
+| `useDockAnnouncement` | 23 | 播报的 state、500ms 尾随定时器、订阅三处输入 |
+| `useDockStateReport` | 39 | 「为什么屏幕上是空的」那条 trace，以及「屏幕上出现过什么」的记账 |
+| `useComposerHistory` | 34 | 历史的一次读取 + 409 静默重试 + 回合结束时刷新 |
+
+`GhostDock` 999 → **918 行**（预估 866，差值来自 hook 自身的签名与注释）。
+
+三条约束都守住了：effect 的依赖数组逐字照搬（`[statusText, failureText, pendingAny, running]`、`[decisionKey]`、`[sessionId, epoch]`）；`latest.current` 的位置没动；`learnedShown` 与 `dockBooking` 都以参数传入，没有在子 hook 里重建。
+
+剩下 D（画灰字，97 行）、E（按键，95 行）、F（请求机器，234 行）——按计划 D+E 一批、F 单独一批。
+
+单测 109、场景 39/39（连跑两次），行为无变化。
+
 ### 0.31.35
 第 5 步收口：`dismissedDraft` 与 `switchDraft` 并进 `dockReducer`。
 

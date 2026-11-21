@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.35'
+    const BUILD = '0.31.36'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -1533,6 +1533,119 @@ const COVERED_DEBOUNCE_MS = 1200
       return { booking: current, send: dispatch }
     }
 
+    /**
+     * What a screen reader hears, and when. A 500ms tail means the text has settled
+     * before it is announced: a streamed delta must not interrupt the last sentence.
+     */
+    function useDockAnnouncement(input) {
+      const [announcement, setAnnouncement] = React.useState('')
+      const timer = React.useRef(null)
+      React.useEffect(() => {
+        if (timer.current !== null) clearTimeout(timer.current)
+        timer.current = setTimeout(() => {
+          timer.current = null
+          setAnnouncement(describeAnnouncement({
+            t: input.t,
+            status: input.status,
+            failure: input.failure,
+            busy: input.busy,
+          }))
+        }, 500)
+        return () => {
+          if (timer.current !== null) {
+            clearTimeout(timer.current)
+            timer.current = null
+          }
+        }
+      }, [input.status, input.failure, input.busy])
+      return announcement
+    }
+
+    /**
+     * One trace line per decided state, so a silent row has a record of the exact
+     * inputs that produced it. Also remembers what reached the screen, so a later
+     * accept or reject can be attributed to it.
+     */
+    function useDockStateReport(input) {
+      const last = React.useRef('')
+      React.useEffect(() => {
+        if (last.current === input.decisionKey) return
+        last.current = input.decisionKey
+        input.report('dock-state', {
+          sessionId: input.sessionId,
+          hasSession: input.session !== undefined && input.session !== null,
+          running: input.running,
+          draftLength: input.draft.length,
+          detail: JSON.stringify({
+            phase: input.state.phase,
+            kind: input.state.kind,
+            items: input.state.items.length,
+            index: input.state.index,
+            forDraftLength: typeof input.state.forDraft === "string" ? input.state.forDraft.length : null,
+            nextActive: input.nextActive,
+            composeActive: input.composeActive,
+            pendingCompose: input.pendingCompose,
+            pendingNext: input.pendingNext,
+            statusLength: input.statusText.length,
+            historyActive: input.historyActive,
+            historyItems: input.history.items.length,
+            draftEmpty: input.draftEmpty,
+            sameSession: input.state.sessionId === input.sessionId,
+            enabled: input.enabled,
+          }),
+        })
+        // Remember what reached the screen so an accept/reject can be attributed.
+        if (input.shown !== '') {
+          input.learnedShown.current = {
+            features: featuresOf(input.shown, input.nextActive ? 'next' : 'compose'),
+            at: Date.now(),
+            consumed: false,
+          }
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [input.decisionKey])
+    }
+
+    /**
+     * Local history is what makes the composer feel instant: one cheap read per
+     * Session, then every keystroke is matched without a model in the loop. A Session
+     * the Host has not loaded yet answers 409, so the read retries quietly.
+     */
+    function useComposerHistory(sessionId) {
+      const [history, setHistory] = React.useState({ sessionId: null, items: [] })
+      const historyRef = React.useRef(history)
+      historyRef.current = history
+      // Bumped when a turn finishes, so the history matrix picks up new messages.
+      const [epoch, setEpoch] = React.useState(0)
+      React.useEffect(() => {
+        if (sessionId === null) return undefined
+        const controller = new AbortController()
+        let cancelled = false
+        let attempt = 0
+        let retry = null
+        const load = () => {
+          fetchHistory(sessionId, controller.signal)
+            .then((items) => {
+              if (cancelled) return
+              setHistory({ sessionId, items })
+            })
+            .catch((error) => {
+              if (cancelled || controller.signal.aborted) return
+              if (error?.status !== 409 || attempt >= 6) return
+              attempt += 1
+              retry = setTimeout(load, Math.min(15000, 700 * 2 ** (attempt - 1)))
+            })
+        }
+        load()
+        return () => {
+          cancelled = true
+          if (retry !== null) clearTimeout(retry)
+          controller.abort()
+        }
+      }, [sessionId, epoch])
+      return { history, historyRef, bumpHistoryEpoch: () => setEpoch((value) => value + 1) }
+    }
+
     function GhostDock(props) {
       const { session, input, inputActions, t } = props
       const ghost = props.ghost ?? idleGhost()
@@ -1586,42 +1699,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const layer = React.useRef(null)
       if (layer.current === null) layer.current = createGhostLayer()
       const ghostLayer = layer.current
-      const [history, setHistory] = React.useState({ sessionId: null, items: [] })
-      const historyRef = React.useRef(history)
-      historyRef.current = history
-      // Bumped when a turn finishes, so the history matrix picks up new messages.
-      const [historyEpoch, setHistoryEpoch] = React.useState(0)
-
-      // Local history is what makes the composer feel instant: one cheap read per
-      // Session, then every keystroke is matched without a model in the loop.
-      // A Session the Host has not loaded yet answers 409, so retry quietly: that
-      // is exactly the state right after opening DSH.
-      React.useEffect(() => {
-        if (sessionId === null) return undefined
-        const controller = new AbortController()
-        let cancelled = false
-        let attempt = 0
-        let retry = null
-        const load = () => {
-          fetchHistory(sessionId, controller.signal)
-            .then((items) => {
-              if (cancelled) return
-              setHistory({ sessionId, items })
-            })
-            .catch((error) => {
-              if (cancelled || controller.signal.aborted) return
-              if (error?.status !== 409 || attempt >= 6) return
-              attempt += 1
-              retry = setTimeout(load, Math.min(15000, 700 * 2 ** (attempt - 1)))
-            })
-        }
-        load()
-        return () => {
-          cancelled = true
-          if (retry !== null) clearTimeout(retry)
-          controller.abort()
-        }
-      }, [sessionId, historyEpoch])
+      const { history, historyRef, bumpHistoryEpoch } = useComposerHistory(sessionId)
 
       React.useEffect(() => {
         if (beaconSent.current) return
@@ -1948,7 +2026,7 @@ const COVERED_DEBOUNCE_MS = 1200
         if (prior.running && !running) {
           bumpEpoch(sessionId)
           // A finished turn adds messages this Session's history did not have.
-          setHistoryEpoch((value) => value + 1)
+          bumpHistoryEpoch()
           // New turn, new transcript: stored suggestions for it are stale.
           clearSessionSuggestions(sessionId)
           // A retry that was armed for a failed draft is obsolete now.
@@ -2423,21 +2501,8 @@ const COVERED_DEBOUNCE_MS = 1200
         && state.phase === 'loading'
       const pendingAny = pendingCompose || pendingNext
       // A screen reader should hear the outcome once, not every streamed delta.
-      const [announcement, setAnnouncement] = React.useState('')
-      const announceTimer = React.useRef(null)
-      React.useEffect(() => {
-        if (announceTimer.current !== null) clearTimeout(announceTimer.current)
-        announceTimer.current = setTimeout(() => {
-          announceTimer.current = null
-          setAnnouncement(describeAnnouncement({ t, status: statusText, failure: failureText, busy: pendingAny || running }))
-        }, 500)
-        return () => {
-          if (announceTimer.current !== null) {
-            clearTimeout(announceTimer.current)
-            announceTimer.current = null
-          }
-        }
-      }, [statusText, failureText, pendingAny, running])
+      // Announced once the text settles; see useDockAnnouncement.
+      const announcement = useDockAnnouncement({ t, status: statusText, failure: failureText, busy: pendingAny || running })
       // An already generated suggestion survives the next request. Keeping it in
       // the row means the user never sees their completion simply disappear.
       const heldText = state.sessionId === sessionId
@@ -2451,44 +2516,11 @@ const COVERED_DEBOUNCE_MS = 1200
       // Why is nothing on screen? One line per decided state, so a silent UI has
       // a record of the exact inputs that produced it.
       const decisionKey = `${state.phase}|${state.kind}|${state.items.length}|${nextActive}|${composeActive}|${historyActive}|${draftEmpty}|${running}`
-      const lastDecision = React.useRef('')
-      React.useEffect(() => {
-        if (lastDecision.current === decisionKey) return
-        lastDecision.current = decisionKey
-        report('dock-state', {
-          sessionId,
-          hasSession: session !== undefined && session !== null,
-          running,
-          draftLength: draft.length,
-          detail: JSON.stringify({
-            phase: state.phase,
-            kind: state.kind,
-            items: state.items.length,
-            index: state.index,
-            forDraftLength: typeof state.forDraft === 'string' ? state.forDraft.length : null,
-            nextActive,
-            composeActive,
-            pendingCompose,
-            pendingNext,
-            statusLength: statusText.length,
-            historyActive,
-            historyItems: history.items.length,
-            draftEmpty,
-            sameSession: state.sessionId === sessionId,
-            enabled,
-          }),
-        })
-        // Remember what reached the screen so an accept/reject can be attributed.
-        const shownText = nextActive ? current : proposal
-        if (shownText !== '') {
-          learnedShown.current = {
-            features: featuresOf(shownText, nextActive ? 'next' : 'compose'),
-            at: Date.now(),
-            consumed: false,
-          }
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [decisionKey])
+      useDockStateReport({
+        t, decisionKey, sessionId, session, running, draft, state, history, enabled,
+        nextActive, composeActive, historyActive, pendingCompose, pendingNext, statusText, draftEmpty,
+        shown: nextActive ? current : proposal, learnedShown, report,
+      })
 
       if (!enabled) return null
       const position = nextActive && items.length > 1
