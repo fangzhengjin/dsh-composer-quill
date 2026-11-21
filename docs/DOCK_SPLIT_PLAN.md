@@ -1,6 +1,6 @@
 # GhostDock 拆分方案（待确认）
 
-> **状态：A+B+C 在 0.31.36、D+E 在 0.31.37 落地；只剩 F（请求机器）。** 本文记录剩余单元与三条约束。
+> **状态：全部落地——A+B+C 在 0.31.36、D+E 在 0.31.37、F 在 0.31.39。** `GhostDock` 999 → 513 行；剩下的三个 effect 与渲染耦合最紧，决定不再拆。
 
 ## 0. 先说结论：没有「视觉区块」可拆
 
@@ -56,7 +56,9 @@ return h(React.Fragment, null,
 
 D+E 实际结果：918 → **762 行**（`useGhostPaint` 96 行、`useComposerKeys` 65 行）。
 
-F 搬走预计到 **约 528 行**（request/composeStream/nextJson 三个 useCallback 加上四个 effect）。
+F 实际结果：762 → **513 行**（`useGhostRequests` 265 行，含两个发送路径、三个 effect、409 退避与重试预算）。
+
+记账用的九个 ref（`timer`、`lastRequested`、`retriedFor`、`composing`、`notLive`、`servedFromStore`、`lastCall`、`historyRef`、`learnedShown`）**不进 hook**，由组件持有、以 `refs` 一个对象传入——它们在会话 effect、打字 effect、按键 hook 里都还要读写，两份就会互相看不见。
 
 ## 3. 三条必须遵守的约束
 

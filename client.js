@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.38'
+    const BUILD = '0.31.39'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -1823,6 +1823,281 @@ const COVERED_DEBOUNCE_MS = 1200
     }, [visible, nextActive, items.length, ghost, ghostLayer, dismissAll])
     }
 
+    /**
+     * The request machinery: who may ask the Host for a prediction, and how. Owns the
+     * timers, the 409 backoff, the one-retry-per-draft budget and the unmount cleanup;
+     * the bookkeeping refs stay with the caller, so nothing is created twice.
+     */
+    function useGhostRequests(input) {
+      const {
+        ghost, ghostLayer, latest, state, draft, enabled, running, sessionId,
+        dockBooking, sendDock, report, stopTimer, domDraft, refs,
+      } = input
+      // The caller owns every one of these: the Session effect, the typing effect and
+      // the keys hook read and write them too. One object, one owner, no second copy.
+      const {
+        timer, lastRequested, retriedFor, composing, notLive, servedFromStore, lastCall, historyRef,
+      } = refs
+      const requestRef = React.useRef(null)
+      const liveBlocked = () => Date.now() < notLive.current.until
+      const markNotLive = () => {
+        const state = notLive.current
+        state.attempts = Math.min(state.attempts + 1, 6)
+        const delay = Math.min(15000, 700 * 2 ** (state.attempts - 1))
+        state.until = Date.now() + delay
+        if (state.timer !== null) clearTimeout(state.timer)
+        // Clear the claim so the safety net re-asks once the backoff expires.
+        state.timer = setTimeout(() => {
+          state.timer = null
+          lastRequested.current = null
+          const live = latest.current
+          if (!live.enabled || live.running || live.manual || live.sessionId === null) return
+          // The safety net only asks about non-empty drafts, so an empty composer
+          // would never recover without this explicit retry.
+          if (live.draftEmpty) requestRef.current?.('next', '', true)
+        }, delay + 50)
+      }
+      const markLive = () => {
+        const state = notLive.current
+        if (state.timer !== null) clearTimeout(state.timer)
+        state.timer = null
+        state.until = 0
+        state.attempts = 0
+      }
+  
+      // A request that was just answered for the same draft is reused instead of
+      // repeated, and two triggers aimed at the same draft within a moment share
+      // one network call.
+        // Set when the store answered: nothing may be re-sampled for that key.
+      // Compose streams: deltas land as they arrive and are repainted once per frame,
+      // so the ghost starts growing immediately. Split out of request().
+      const composeStream = React.useCallback((live, draftNow) => {
+          lastRequested.current = draftNow
+          const active = ghost.streamStart(live.sessionId, 'compose', draftNow)
+          let idle = null
+          let buffer = ''
+          let frame = null
+          const flush = () => {
+            if (frame !== null) {
+              if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame)
+              else clearTimeout(frame)
+              frame = null
+            }
+            if (buffer !== '') {
+              const text = buffer
+              buffer = ''
+              ghost.streamDelta(text)
+            }
+          }
+          const queue = (text) => {
+            buffer += text
+            if (frame !== null) return
+            frame = typeof window.requestAnimationFrame === 'function'
+              ? window.requestAnimationFrame(() => { frame = null; flush() })
+              : setTimeout(() => { frame = null; flush() }, 16)
+          }
+          const bump = () => {
+            if (idle !== null) clearTimeout(idle)
+            idle = setTimeout(() => {
+              active.abort()
+              ghost.streamFail('timed out')
+            }, live.timeoutMs || CLIENT_TIMEOUT_MS)
+          }
+          bump()
+          streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose' }, active.signal, {
+            start: (data) => {
+              bump()
+              // Keep whatever is on screen: the first delta replaces it.
+              ghost.streamModeSet?.(data?.mode)
+            },
+            retract: (data) => {
+              bump()
+              flush()
+              ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full')
+            },
+            delta: (data) => {
+              bump()
+              if (typeof data?.text === 'string') queue(data.text)
+            },
+            final: (data) => {
+              bump()
+              flush()
+              if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode)
+            },
+            done: (data) => {
+              flush()
+              markLive()
+              ghost.streamDone(data ?? {})
+              // Most compose suggestions arrive over SSE: persist them too, or
+              // only the JSON fallback would ever be reused.
+              const settled = ghost.getSnapshot()
+              if (settled.kind === 'compose' && settled.items.length > 0) {
+                saveSuggestion(settled.sessionId, 'compose', settled.forDraft, settled.items, `${historyRef.current.items.length}`, settled.mode)
+              }
+            },
+            error: (data) => {
+              const message = typeof data?.message === 'string' ? data.message : 'stream failed'
+              ghost.streamFail(message)
+              report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
+            },
+            json: (body) => {
+              const items = rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
+              ghost.settle(live.sessionId, active, 'compose', draftNow, items)
+              saveSuggestion(live.sessionId, 'compose', draftNow, items, `${historyRef.current.items.length}`, typeof body?.mode === 'string' ? body.mode : '')
+            },
+          }).catch((error) => {
+            if (active.signal.aborted) return
+            // The Host has not loaded this Session yet: not a failure.
+            if (error?.status === 409) {
+              ghost.clear(live.sessionId ?? undefined)
+              markNotLive()
+              report('not-live', { sessionId: live.sessionId, detail: 'compose' })
+              return
+            }
+            const message = error instanceof Error ? error.message : String(error)
+            ghost.streamFail(message)
+            report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
+          }).finally(() => {
+            if (idle !== null) clearTimeout(idle)
+            if (frame !== null) {
+              if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame)
+              else clearTimeout(frame)
+              frame = null
+            }
+          })
+          return
+      }, [ghost])   // only refs and stable helpers are touched: a first-render capture is safe
+  
+      // The JSON path: one call, one settled answer. Split out of request().
+      const nextJson = React.useCallback((live, draftNow, mode, kind) => {
+        const active = ghost.begin(live.sessionId, kind, draftNow)
+        const deadline = setTimeout(() => {
+          active.abort()
+          ghost.fail(live.sessionId, active, kind, draftNow, 'timed out')
+        }, live.timeoutMs || CLIENT_TIMEOUT_MS)
+        active.signal.addEventListener('abort', () => clearTimeout(deadline), { once: true })
+        Promise.resolve()
+          .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode }, active.signal))
+          .then((body) => {
+            if (active.signal.aborted) return
+            markLive()
+            const items = mode === 'next'
+              ? (Array.isArray(body?.candidates) ? body.candidates : [])
+              : rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
+            ghost.settle(live.sessionId, active, kind, draftNow, items)
+            saveSuggestion(live.sessionId, kind, draftNow, items, `${historyRef.current.items.length}`, kind === 'next' ? 'full' : '')
+          }, (error) => {
+            if (active.signal.aborted) return
+            if (error?.status === 409) {
+              ghost.clear(live.sessionId ?? undefined)
+              markNotLive()
+              report('not-live', { sessionId: live.sessionId, detail: mode })
+              return
+            }
+            const message = error instanceof Error ? error.message : String(error)
+            ghost.fail(live.sessionId, active, kind, draftNow, message)
+            report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: `${mode}: ${message}`.slice(0, 300) })
+            try { console.warn('[composer-quill] request failed:', mode, message) } catch { /* no console */ }
+          })
+          .finally(() => clearTimeout(deadline))
+      }, [ghost])   // only refs and stable helpers are touched: a first-render capture is safe
+  
+      const request = React.useCallback((mode, forDraft, force = false, delayOverride = null) => {
+        stopTimer()
+        timer.current = setTimeout(() => {
+          timer.current = null
+          const live = latest.current
+          // One snapshot, read once: the gates below share it, exactly as the
+          // hand-written chain did (two reads could disagree mid-flight).
+          const stored = ghost.getSnapshot()
+          const now = Date.now()
+          const verdict = gateFor({
+            mode,
+            forDraft,
+            force,
+            now,
+            live: {
+              enabled: live.enabled,
+              sessionId: live.sessionId,
+              running: live.running,
+              draftEmpty: live.draftEmpty,
+              draft: live.draft,
+            },
+            blockedUntil: notLive.current.until,
+            served: servedFromStore.current,
+            lastCall: lastCall.current,
+            stored: {
+              sessionId: stored.sessionId,
+              kind: stored.kind,
+              forDraft: stored.forDraft,
+              phase: stored.phase,
+              requested: stored.requested,
+            },
+            dismissed: dockBooking.current.dismissed,
+          })
+          const draftNow = verdict.draftNow
+          for (const effect of verdict.effects) {
+            if (effect.type === 'report') {
+              report(effect.name, { sessionId: live.sessionId, draftLength: draftNow.length, detail: effect.detail })
+              continue
+            }
+            if (effect.type === 'mark-last-call') {
+              lastCall.current = { key: verdict.key, at: now }
+              continue
+            }
+            if (effect.type === 'reschedule') {
+              timer.current = setTimeout(() => {
+                timer.current = null
+                request(mode, forDraft, force)
+              }, effect.wait)
+            }
+          }
+          if (verdict.verdict !== 'send') return
+          const kind = mode === 'next' ? 'next' : 'compose'
+  
+          // Compose streams: deltas land as they arrive and are repainted once
+          // per frame, so the ghost starts growing immediately.
+          if (mode === 'compose') {
+            composeStream(live, draftNow)
+            return
+          }
+  
+          nextJson(live, draftNow, mode, kind)
+        }, delayOverride ?? (mode === 'next' ? NEXT_DEBOUNCE_MS : latest.current.debounceMs))
+      }, [stopTimer, ghost, composeStream, nextJson])
+      requestRef.current = request
+  
+      const retryTimer = React.useRef(null)
+      React.useEffect(() => {
+        if (!enabled || running || sessionId === null) return undefined
+        if (state.phase !== 'error' || state.kind !== 'compose') return undefined
+        if (state.forDraft !== draft || retriedFor.current === draft) return undefined
+        retriedFor.current = draft
+        // The timer lives in a ref: a deps change (the store moving, the draft
+        // growing) must not silently swallow the one retry this draft gets.
+        if (retryTimer.current !== null) clearTimeout(retryTimer.current)
+        retryTimer.current = setTimeout(() => {
+          retryTimer.current = null
+          request('compose', draft)
+        }, 1200)
+        return () => {
+          if (retryTimer.current !== null) {
+            clearTimeout(retryTimer.current)
+            retryTimer.current = null
+          }
+        }
+      }, [state.phase, state.kind, state.forDraft, draft, enabled, running, sessionId, request])
+      React.useEffect(() => () => {
+        stopTimer()
+        if (retryTimer.current !== null) clearTimeout(retryTimer.current)
+        if (notLive.current.timer !== null) clearTimeout(notLive.current.timer)
+        ghost.cancel()
+        ghost.clear()
+        ghostLayer.clear()
+      }, [stopTimer, ghost, ghostLayer])
+      return { request }
+    }
+
     function GhostDock(props) {
       const { session, input, inputActions, t } = props
       const ghost = props.ghost ?? idleGhost()
@@ -1925,238 +2200,17 @@ const COVERED_DEBOUNCE_MS = 1200
        * failure: back off quietly and let the safety net retry, instead of firing
        * a request on every keystroke.
        */
-      const requestRef = React.useRef(null)
+      // Shared with the hook: it reads and writes these, the component resets them
+      // on a Session switch, so exactly one copy exists.
       const notLive = React.useRef({ until: 0, attempts: 0, timer: null })
-      const liveBlocked = () => Date.now() < notLive.current.until
-      const markNotLive = () => {
-        const state = notLive.current
-        state.attempts = Math.min(state.attempts + 1, 6)
-        const delay = Math.min(15000, 700 * 2 ** (state.attempts - 1))
-        state.until = Date.now() + delay
-        if (state.timer !== null) clearTimeout(state.timer)
-        // Clear the claim so the safety net re-asks once the backoff expires.
-        state.timer = setTimeout(() => {
-          state.timer = null
-          lastRequested.current = null
-          const live = latest.current
-          if (!live.enabled || live.running || live.manual || live.sessionId === null) return
-          // The safety net only asks about non-empty drafts, so an empty composer
-          // would never recover without this explicit retry.
-          if (live.draftEmpty) requestRef.current?.('next', '', true)
-        }, delay + 50)
-      }
-      const markLive = () => {
-        const state = notLive.current
-        if (state.timer !== null) clearTimeout(state.timer)
-        state.timer = null
-        state.until = 0
-        state.attempts = 0
-      }
-
-      // A request that was just answered for the same draft is reused instead of
-      // repeated, and two triggers aimed at the same draft within a moment share
-      // one network call.
       const lastCall = React.useRef({ key: '', at: 0 })
-        // Set when the store answered: nothing may be re-sampled for that key.
-        const servedFromStore = React.useRef({ key: '', at: 0 })
+      const servedFromStore = React.useRef({ key: '', at: 0 })
       const learnedShown = React.useRef(null)
-      // Compose streams: deltas land as they arrive and are repainted once per frame,
-      // so the ghost starts growing immediately. Split out of request().
-      const composeStream = React.useCallback((live, draftNow) => {
-          lastRequested.current = draftNow
-          const active = ghost.streamStart(live.sessionId, 'compose', draftNow)
-          let idle = null
-          let buffer = ''
-          let frame = null
-          const flush = () => {
-            if (frame !== null) {
-              if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame)
-              else clearTimeout(frame)
-              frame = null
-            }
-            if (buffer !== '') {
-              const text = buffer
-              buffer = ''
-              ghost.streamDelta(text)
-            }
-          }
-          const queue = (text) => {
-            buffer += text
-            if (frame !== null) return
-            frame = typeof window.requestAnimationFrame === 'function'
-              ? window.requestAnimationFrame(() => { frame = null; flush() })
-              : setTimeout(() => { frame = null; flush() }, 16)
-          }
-          const bump = () => {
-            if (idle !== null) clearTimeout(idle)
-            idle = setTimeout(() => {
-              active.abort()
-              ghost.streamFail('timed out')
-            }, live.timeoutMs || CLIENT_TIMEOUT_MS)
-          }
-          bump()
-          streamRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode: 'compose' }, active.signal, {
-            start: (data) => {
-              bump()
-              // Keep whatever is on screen: the first delta replaces it.
-              ghost.streamModeSet?.(data?.mode)
-            },
-            retract: (data) => {
-              bump()
-              flush()
-              ghost.streamRetract(data?.mode === 'append' ? 'append' : 'full')
-            },
-            delta: (data) => {
-              bump()
-              if (typeof data?.text === 'string') queue(data.text)
-            },
-            final: (data) => {
-              bump()
-              flush()
-              if (typeof data?.text === 'string') ghost.streamFinal(data.text, data?.mode)
-            },
-            done: (data) => {
-              flush()
-              markLive()
-              ghost.streamDone(data ?? {})
-              // Most compose suggestions arrive over SSE: persist them too, or
-              // only the JSON fallback would ever be reused.
-              const settled = ghost.getSnapshot()
-              if (settled.kind === 'compose' && settled.items.length > 0) {
-                saveSuggestion(settled.sessionId, 'compose', settled.forDraft, settled.items, `${historyRef.current.items.length}`, settled.mode)
-              }
-            },
-            error: (data) => {
-              const message = typeof data?.message === 'string' ? data.message : 'stream failed'
-              ghost.streamFail(message)
-              report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
-            },
-            json: (body) => {
-              const items = rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
-              ghost.settle(live.sessionId, active, 'compose', draftNow, items)
-              saveSuggestion(live.sessionId, 'compose', draftNow, items, `${historyRef.current.items.length}`, typeof body?.mode === 'string' ? body.mode : '')
-            },
-          }).catch((error) => {
-            if (active.signal.aborted) return
-            // The Host has not loaded this Session yet: not a failure.
-            if (error?.status === 409) {
-              ghost.clear(live.sessionId ?? undefined)
-              markNotLive()
-              report('not-live', { sessionId: live.sessionId, detail: 'compose' })
-              return
-            }
-            const message = error instanceof Error ? error.message : String(error)
-            ghost.streamFail(message)
-            report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: message.slice(0, 300) })
-          }).finally(() => {
-            if (idle !== null) clearTimeout(idle)
-            if (frame !== null) {
-              if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame)
-              else clearTimeout(frame)
-              frame = null
-            }
-          })
-          return
-      }, [ghost])   // only refs and stable helpers are touched: a first-render capture is safe
-
-      // The JSON path: one call, one settled answer. Split out of request().
-      const nextJson = React.useCallback((live, draftNow, mode, kind) => {
-        const active = ghost.begin(live.sessionId, kind, draftNow)
-        const deadline = setTimeout(() => {
-          active.abort()
-          ghost.fail(live.sessionId, active, kind, draftNow, 'timed out')
-        }, live.timeoutMs || CLIENT_TIMEOUT_MS)
-        active.signal.addEventListener('abort', () => clearTimeout(deadline), { once: true })
-        Promise.resolve()
-          .then(() => callRoute(ROUTE, { sessionId: live.sessionId, draft: draftNow, mode }, active.signal))
-          .then((body) => {
-            if (active.signal.aborted) return
-            markLive()
-            const items = mode === 'next'
-              ? (Array.isArray(body?.candidates) ? body.candidates : [])
-              : rebaseItems(typeof body?.text === 'string' && body.text !== '' ? [body.text] : [], draftNow)
-            ghost.settle(live.sessionId, active, kind, draftNow, items)
-            saveSuggestion(live.sessionId, kind, draftNow, items, `${historyRef.current.items.length}`, kind === 'next' ? 'full' : '')
-          }, (error) => {
-            if (active.signal.aborted) return
-            if (error?.status === 409) {
-              ghost.clear(live.sessionId ?? undefined)
-              markNotLive()
-              report('not-live', { sessionId: live.sessionId, detail: mode })
-              return
-            }
-            const message = error instanceof Error ? error.message : String(error)
-            ghost.fail(live.sessionId, active, kind, draftNow, message)
-            report('compose-failed', { sessionId: live.sessionId, draftLength: draftNow.length, detail: `${mode}: ${message}`.slice(0, 300) })
-            try { console.warn('[composer-quill] request failed:', mode, message) } catch { /* no console */ }
-          })
-          .finally(() => clearTimeout(deadline))
-      }, [ghost])   // only refs and stable helpers are touched: a first-render capture is safe
-
-      const request = React.useCallback((mode, forDraft, force = false, delayOverride = null) => {
-        stopTimer()
-        timer.current = setTimeout(() => {
-          timer.current = null
-          const live = latest.current
-          // One snapshot, read once: the gates below share it, exactly as the
-          // hand-written chain did (two reads could disagree mid-flight).
-          const stored = ghost.getSnapshot()
-          const now = Date.now()
-          const verdict = gateFor({
-            mode,
-            forDraft,
-            force,
-            now,
-            live: {
-              enabled: live.enabled,
-              sessionId: live.sessionId,
-              running: live.running,
-              draftEmpty: live.draftEmpty,
-              draft: live.draft,
-            },
-            blockedUntil: notLive.current.until,
-            served: servedFromStore.current,
-            lastCall: lastCall.current,
-            stored: {
-              sessionId: stored.sessionId,
-              kind: stored.kind,
-              forDraft: stored.forDraft,
-              phase: stored.phase,
-              requested: stored.requested,
-            },
-            dismissed: dockBooking.current.dismissed,
-          })
-          const draftNow = verdict.draftNow
-          for (const effect of verdict.effects) {
-            if (effect.type === 'report') {
-              report(effect.name, { sessionId: live.sessionId, draftLength: draftNow.length, detail: effect.detail })
-              continue
-            }
-            if (effect.type === 'mark-last-call') {
-              lastCall.current = { key: verdict.key, at: now }
-              continue
-            }
-            if (effect.type === 'reschedule') {
-              timer.current = setTimeout(() => {
-                timer.current = null
-                request(mode, forDraft, force)
-              }, effect.wait)
-            }
-          }
-          if (verdict.verdict !== 'send') return
-          const kind = mode === 'next' ? 'next' : 'compose'
-
-          // Compose streams: deltas land as they arrive and are repainted once
-          // per frame, so the ghost starts growing immediately.
-          if (mode === 'compose') {
-            composeStream(live, draftNow)
-            return
-          }
-
-          nextJson(live, draftNow, mode, kind)
-        }, delayOverride ?? (mode === 'next' ? NEXT_DEBOUNCE_MS : latest.current.debounceMs))
-      }, [stopTimer, ghost, composeStream, nextJson])
-      requestRef.current = request
+      const dockRefs = { timer, lastRequested, retriedFor, composing, notLive, servedFromStore, lastCall, historyRef }
+      const { request } = useGhostRequests({
+        ghost, ghostLayer, latest, state, draft, enabled, running, sessionId,
+        dockBooking, sendDock, report, stopTimer, domDraft, refs: dockRefs,
+      })
 
       // Turn boundary and Session switch drive the next-message prediction.
       React.useEffect(() => {
@@ -2331,34 +2385,6 @@ const COVERED_DEBOUNCE_MS = 1200
        * One retry per draft after a failed request. A dropped model call should
        * not leave the composer waiting forever on a chip that never resolves.
        */
-      const retryTimer = React.useRef(null)
-      React.useEffect(() => {
-        if (!enabled || running || sessionId === null) return undefined
-        if (state.phase !== 'error' || state.kind !== 'compose') return undefined
-        if (state.forDraft !== draft || retriedFor.current === draft) return undefined
-        retriedFor.current = draft
-        // The timer lives in a ref: a deps change (the store moving, the draft
-        // growing) must not silently swallow the one retry this draft gets.
-        if (retryTimer.current !== null) clearTimeout(retryTimer.current)
-        retryTimer.current = setTimeout(() => {
-          retryTimer.current = null
-          request('compose', draft)
-        }, 1200)
-        return () => {
-          if (retryTimer.current !== null) {
-            clearTimeout(retryTimer.current)
-            retryTimer.current = null
-          }
-        }
-      }, [state.phase, state.kind, state.forDraft, draft, enabled, running, sessionId, request])
-      React.useEffect(() => () => {
-        stopTimer()
-        if (retryTimer.current !== null) clearTimeout(retryTimer.current)
-        if (notLive.current.timer !== null) clearTimeout(notLive.current.timer)
-        ghost.cancel()
-        ghost.clear()
-        ghostLayer.clear()
-      }, [stopTimer, ghost, ghostLayer])
 
       const items = state.sessionId === sessionId ? state.items : []
       // Learning only reorders: the candidate set itself still comes from the Host.
