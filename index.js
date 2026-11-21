@@ -1240,9 +1240,12 @@ function replayCompose(send, hit, cleanDraft) {
 const composeInFlight = new Map()
 
 /** Do the model work for one compose request and emit its frames. */
-async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal }) {
-  try {
-    if (Array.from(cleanDraft).length < MIN_TAIL_DRAFT_CHARS) {
+/**
+ * The two-or-three character draft: finish it or stay silent. Extracted from
+ * the caller, which had grown past a screen.
+ */
+async function composeShortDraft(ctx, session, events, options) {
+  const { cleanDraft, context, locale, forced, key, send, signal } = options
       const shortContext = transcriptOf(events, { rows: 8, chars: 2400, focus: cleanDraft }) || '[]'
       const shortPrompt = buildShortDraftPrompt({
         draft: cleanDraft,
@@ -1265,13 +1268,18 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
         send('final', { text: parsedShort.text, mode })
         remember(key, { kind: 'compose', text: parsedShort.text, mode, model: short.route })
         send('done', { mode })
-        return
+        return true
       }
       // Nothing sensible to say from two characters: stay silent.
       send('start', { mode: 'full' })
       send('done', { reason: 'unchanged' })
-      return
-    }
+      return true
+}
+
+async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal }) {
+  try {
+    // Two or three characters: finish it or stay silent.
+    if (await composeShortDraft(ctx, session, events, { cleanDraft, locale, forced, key, send, signal })) return
     const context = transcriptOf(events, { rows: 10, chars: 3200, focus: cleanDraft }) || '[]'
     let head = ''
     let acc = ''
@@ -1446,6 +1454,37 @@ async function predict(ctx, { sessionId, draft, mode, locale, forced, epoch = 0 
 }
 
 /** The model work behind one cache key. */
+/**
+ * The two-or-three character draft, as a settled prediction. Split out of
+ * computePrediction, which had grown past a screen.
+ */
+async function computeShortPrediction(ctx, session, events, options) {
+  const { kind, cleanDraft, context, locale, forced, key, signal } = options
+    const shortPrompt = buildShortDraftPrompt({
+      draft: cleanDraft,
+      context,
+      digest: sessionDigest(events),
+      assistant: lastAssistantText(events),
+      style: styleProfile(events),
+      language: resolveLanguage({ locale, forced }),
+    })
+    const short = await ask(ctx, session, events, COMPOSE_RULES, shortPrompt, signal)
+    const parsedShort = parseComposeReply(short.text, cleanDraft, {
+      language: resolveLanguage({ locale, forced }),
+      allowTail: true,
+      minTail: 3,
+    })
+    if (parsedShort !== null) {
+      const mode = parsedShort.mode === 'append' ? 'append' : 'full'
+      const value = { kind, text: parsedShort.text, mode, model: short.route }
+      remember(key, value)
+      return value
+    }
+    const empty = { kind, text: null, reason: 'unchanged', model: short.route }
+    remember(key, empty, NEGATIVE_TTL_MS)
+    return empty
+}
+
 async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, signal }) {
   const context = hasTurns ? transcriptOf(events, { rows: 10, chars: 3200, focus: cleanDraft }) : '[]'
   if (kind === 'next') {
@@ -1519,30 +1558,9 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
     return value
   }
 
+  // Two or three characters: finish it or stay silent.
   if (Array.from(cleanDraft).length < MIN_TAIL_DRAFT_CHARS) {
-    const shortPrompt = buildShortDraftPrompt({
-      draft: cleanDraft,
-      context,
-      digest: sessionDigest(events),
-      assistant: lastAssistantText(events),
-      style: styleProfile(events),
-      language: resolveLanguage({ locale, forced }),
-    })
-    const short = await ask(ctx, session, events, COMPOSE_RULES, shortPrompt, signal)
-    const parsedShort = parseComposeReply(short.text, cleanDraft, {
-      language: resolveLanguage({ locale, forced }),
-      allowTail: true,
-      minTail: 3,
-    })
-    if (parsedShort !== null) {
-      const mode = parsedShort.mode === 'append' ? 'append' : 'full'
-      const value = { kind, text: parsedShort.text, mode, model: short.route }
-      remember(key, value)
-      return value
-    }
-    const empty = { kind, text: null, reason: 'unchanged', model: short.route }
-    remember(key, empty, NEGATIVE_TTL_MS)
-    return empty
+    return computeShortPrediction(ctx, session, events, { kind, cleanDraft, context, locale, forced, key, signal })
   }
 
   const prompt = composePrompt({

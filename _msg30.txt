@@ -1,0 +1,14 @@
+refactor: split the two long functions, share the request headers
+
+E 组延后的两条：
+
+- requestHeaders(accept) 合并 streamRoute / callRoute 的请求头（beacon 那份不动）
+- produceCompose 145 → 117 行（composeShortDraft 抽出）
+- computePrediction 148 → 125 行（computeShortPrediction 抽出）
+- caretPlacement() 移到模块层，挨着 caretAtEnd()
+- 状态行四层嵌套三元抽成 renderStatusChip()
+
+GhostDock 仍约 990 行，未拆：30 多个 state/ref 与三条 effect 相互引用，
+按视觉区块切要先补一层状态机抽象，不是顺手能做的。理由写进 CHANGELOG。
+
+单测 94、场景 39/39 不变（本来就不改行为）。版本 0.31.30。

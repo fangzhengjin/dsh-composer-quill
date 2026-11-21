@@ -4,6 +4,19 @@
 
 ## 0.31.x
 
+### 0.31.30
+E 组延后的两条。
+
+- **两个客户端请求函数的请求头合并**：`streamRoute` 与 `callRoute` 各写一遍「取 token、拼 header、带上 client 标记」，差异只有 `accept`。现在合成 `requestHeaders(accept)`——注意 `report()` 里那份看着像、实际用于 beacon 的 header 没有被波及
+- **`produceCompose` 拆分**：145 → 117 行。两个字符的短草稿分支抽成 `composeShortDraft()`（31 行），它自己有两条出口：能补就补，不能就沉默
+- **`computePrediction` 拆分**：148 → 125 行。同一条短草稿分支抽成 `computeShortPrediction()`（26 行），返回一个落定的结果对象
+- **`caretPlacement()` 从组件里移出来**：它只依赖 `editorEl()`，放在 `caretAtEnd()` 旁边更合适；组件里那些闭包变量它一个都没用到
+- **状态行抽成 `renderStatusChip()`**：待定 / 失败 / 建议 / 按键提示四态原来是一个四层嵌套三元，现在是一个纯函数，改文案和改状态互不影响
+
+**`GhostDock` 仍然约 990 行**，这一条没有做完，原因写清楚：它的 30 多个 `useState`/`useRef` 与三条 effect 相互引用，按视觉区块切分会让 props 线程穿过十几个值、还会切断 `accept` 与 `ghost` 的闭包关系。这一步需要先补一层「dock 状态机」的抽象再动，不是能顺手做掉的。
+
+单测 94、场景 39/39 均无变化——这两条本来就不该改变行为。
+
 ### 0.31.29
 D 组：可访问性。
 

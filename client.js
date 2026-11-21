@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.29'
+    const BUILD = '0.31.30'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -127,10 +127,17 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     /** Read an SSE compose response, falling back to a whole JSON body. */
-    async function streamRoute(url, payload, signal, handlers) {
+    /** Headers every request needs, so the two transports cannot drift apart. */
+    function requestHeaders(accept) {
       const capability = token()
-      const headers = { 'content-type': 'application/json', accept: 'text/event-stream', [CLIENT_HEADER]: '1' }
+      const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
+      if (accept !== undefined) headers.accept = accept
       if (capability !== '') headers[TOKEN_HEADER] = capability
+      return headers
+    }
+
+    async function streamRoute(url, payload, signal, handlers) {
+      const headers = requestHeaders('text/event-stream')
       const response = await fetch(url, {
         method: 'POST',
         headers,
@@ -209,9 +216,7 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     async function callRoute(path, payload, signal) {
-      const capability = token()
-      const headers = { 'content-type': 'application/json', [CLIENT_HEADER]: '1' }
-      if (capability !== '') headers[TOKEN_HEADER] = capability
+      const headers = requestHeaders()
       const response = await fetch(path, {
         method: 'POST',
         headers,
@@ -1004,6 +1009,28 @@ const COVERED_DEBOUNCE_MS = 1200
       return probe.toString().trim() === ''
     }
 
+      /**
+       * Where the caret sits relative to the text: 'end' when nothing follows it,
+       * 'inside' when the user parked it mid-sentence, 'unknown' when it cannot be
+       * measured. 'unknown' behaves like 'end' — a measurement failure must never
+       * disable Tab.
+       */
+      function caretPlacement() {
+        const root = editorEl()
+        const selection = window.getSelection?.()
+        if (root === null || selection === null || selection === undefined || selection.rangeCount === 0) return 'unknown'
+        const range = selection.getRangeAt(0)
+        if (!range.collapsed) return 'unknown'
+        const rest = range.cloneRange()
+        try {
+          rest.selectNodeContents(root)
+          rest.setStart(range.endContainer, range.endOffset)
+        } catch {
+          return 'unknown'
+        }
+        return rest.toString().trim() === '' ? 'end' : 'inside'
+      }
+
     /**
      * View-only inline ghost layer. It lives on <body> as a fixed layer, so the
      * composer's own overflow and stacking cannot clip it.
@@ -1346,6 +1373,40 @@ const COVERED_DEBOUNCE_MS = 1200
     const defaultConfig = () => (defaultConfigStore ??= createConfigStore())
 
     /** Composer-dock entry. */
+      /**
+       * The one-line status row: pending, failure, a suggestion, or the key hints.
+       * Pure, so the dock render stays a layout description.
+       */
+      function renderStatusChip(input) {
+        const { t, hintKey, statusText, failureText, position, running, chipStyle, onAccept } = input
+        if (input.pendingAny) {
+          return h('span', {
+            'data-composer-quill': 'dock-pending',
+            style: { ...chipStyle, borderStyle: 'dotted', opacity: 0.7 },
+          }, t('hint.pending'))
+        }
+        if (failureText !== '') {
+          return h('span', {
+            'data-composer-quill': 'dock-error',
+            title: failureText,
+            style: { ...chipStyle, borderStyle: 'dashed', opacity: 0.85 },
+          }, `${t('hint.error')}：${failureText.length > 60 ? `${failureText.slice(0, 60)}…` : failureText}`)
+        }
+        if (statusText !== '') {
+          return h('button', {
+            type: 'button',
+            'data-composer-quill': 'dock-suggestion',
+            title: t(hintKey),
+            onClick: () => onAccept(),
+            style: { ...chipStyle, cursor: 'pointer' },
+          }, `${t(hintKey)}：${statusText.length > 72 ? `${statusText.slice(0, 72)}…` : statusText}${position}`)
+        }
+        return h('span', {
+          'data-composer-quill': 'dock-hint',
+          style: { ...chipStyle, borderStyle: 'none', color: 'var(--dsw-alias-label-tertiary, #8a8f98)', opacity: 0.75 },
+        }, t(running ? 'hint.busy' : 'hint.keys'))
+      }
+
     function GhostDock(props) {
       const { session, input, inputActions, t } = props
       const ghost = props.ghost ?? idleGhost()
@@ -1965,27 +2026,6 @@ const COVERED_DEBOUNCE_MS = 1200
        * Apply the visible proposal — always in full: the whole tail, or the whole
        * draft for a rewrite. Tab and a chip click behave the same.
        */
-      /**
-       * Where the caret sits relative to the text: 'end' when nothing follows it,
-       * 'inside' when the user parked it mid-sentence, 'unknown' when it cannot be
-       * measured. 'unknown' behaves like 'end' — a measurement failure must never
-       * disable Tab.
-       */
-      function caretPlacement() {
-        const root = editorEl()
-        const selection = window.getSelection?.()
-        if (root === null || selection === null || selection === undefined || selection.rangeCount === 0) return 'unknown'
-        const range = selection.getRangeAt(0)
-        if (!range.collapsed) return 'unknown'
-        const rest = range.cloneRange()
-        try {
-          rest.selectNodeContents(root)
-          rest.setStart(range.endContainer, range.endOffset)
-        } catch {
-          return 'unknown'
-        }
-        return rest.toString().trim() === '' ? 'end' : 'inside'
-      }
 
       const accept = React.useCallback(() => {
         const live = latest.current
@@ -2347,29 +2387,7 @@ const COVERED_DEBOUNCE_MS = 1200
             padding: '0 2px 4px',
             minHeight: '22px',
           },
-        }, pendingAny
-          ? h('span', {
-            'data-composer-quill': 'dock-pending',
-            style: { ...chipStyle, borderStyle: 'dotted', opacity: 0.7 },
-          }, t('hint.pending'))
-          : failureText !== ''
-            ? h('span', {
-              'data-composer-quill': 'dock-error',
-              title: failureText,
-              style: { ...chipStyle, borderStyle: 'dashed', opacity: 0.85 },
-            }, `${t('hint.error')}：${failureText.length > 60 ? `${failureText.slice(0, 60)}…` : failureText}`)
-          : statusText !== ''
-            ? h('button', {
-              type: 'button',
-              'data-composer-quill': 'dock-suggestion',
-              title: t(hintKey),
-              onClick: () => acceptRef.current(true),
-              style: { ...chipStyle, cursor: 'pointer' },
-            }, `${t(hintKey)}：${statusText.length > 72 ? `${statusText.slice(0, 72)}…` : statusText}${position}`)
-            : h('span', {
-              'data-composer-quill': 'dock-hint',
-              style: { ...chipStyle, borderStyle: 'none', color: 'var(--dsw-alias-label-tertiary, #8a8f98)', opacity: 0.75 },
-            }, t(running ? 'hint.busy' : 'hint.keys'))),
+        }, renderStatusChip({ t, hintKey, statusText, failureText, position, running, chipStyle, pendingAny, onAccept: () => acceptRef.current(true) })),
         h('span', {
           role: 'status',
           'aria-live': 'polite',
