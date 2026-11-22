@@ -52,7 +52,9 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill   # 或从仓�
 
 界面里也可以：**设置 → 插件 → 添加插件**，输入框填 `dsh-composer-quill`。本地开发时填目录路径，`dsh plugin --profile desktop add /path/to/dsh-composer-quill`。
 
-装完要重启 DSH，不是刷新页面：客户端代码在启动时按版本固定，刷新只会拿到旧的。想知道在跑哪一版，看日志里的 `build` 字段。
+**用软链（`link:`）方式接进 profile 时，改完客户端代码按 `Ctrl+R` 就生效**——插件从工作目录直接读 `client.js`。用 npm 装的那份是复制进去的，改代码要重新安装或重启。
+
+判断在跑哪一版别只看 `build`（不抬版本号时新旧一样），看 `apply` 那行 beacon 的 `detail`：它记录了这版注册了什么。
 
 这是第三方插件，与 DeepSeek 官方没有隶属关系。遇到问题请开 [issue](https://github.com/yugyq/dsh-composer-quill/issues)，附上日志里相关的那几行。
 
@@ -87,11 +89,11 @@ dsh plugin --profile desktop add github:yugyq/dsh-composer-quill   # 或从仓�
 
 ## 测试
 
-单测 110 项，浏览器场景 46 项，跑在 CI 里。场景覆盖快速连打、停顿出建议、取消、切会话、长文本排版这些真实节奏。
+单测 114 项，浏览器场景 48 项，跑在 CI 里。场景覆盖快速连打、停顿出建议、取消、切会话、长文本排版这些真实节奏。
 
 ```bash
-npm test                          # 110 项离线单测
-npm run test:ui                   # 46 条浏览器场景（自带模拟器）
+npm test                          # 114 项离线单测
+npm run test:ui                   # 48 条浏览器场景（自带模拟器）
 npm test -- --filter=transcript   # 只跑某个行为
 npm test -- --list                # 列出全部用例名
 ```

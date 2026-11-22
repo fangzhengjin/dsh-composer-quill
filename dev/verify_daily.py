@@ -964,6 +964,78 @@ def main() -> int:
         h("setComposeMode('ok')")
         h("type('')")
 
+        # ---- S43 两个开关各管一件事：关掉「补写」后打字不再请求
+        # 直接改配置（设置卡片由夹具临时挂载，重复挂载会留下旧的 React 树，点击不可靠）
+        def set_flag(name, value):
+            page.evaluate(
+                """(payload) => {
+                    const key = 'dsh.composer-quill.config';
+                    let raw = {};
+                    try { raw = JSON.parse(window.localStorage.getItem(key) || '{}') } catch {}
+                    raw[payload.name] = payload.value;
+                    window.localStorage.setItem(key, JSON.stringify(raw));
+                }""",
+                {'name': name, 'value': value},
+            )
+            page.reload()
+            page.wait_for_function("() => window.__harnessReady === true", timeout=30000)
+            page.wait_for_timeout(300)
+        
+        set_flag('composeEnabled', False)
+        page.focus('[data-composer-input]')
+        before_calls = len([c for c in h('calls') if c.get('mode') == 'compose'])
+        h("typeLive('关掉补写之后不该再有请求', {delay: 25})")
+        page.wait_for_timeout(1600)
+        after_calls = len([c for c in h('calls') if c.get('mode') == 'compose'])
+        set_flag('composeEnabled', True)
+        page.focus('[data-composer-input]')
+        h("typeLive('打开之后应该又能补写了', {delay: 25})")
+        page.wait_for_timeout(1600)
+        resumed = len([c for c in h('calls') if c.get('mode') == 'compose'])
+        record(
+            "S43 关掉补写后不再请求",
+            after_calls == before_calls and resumed > after_calls,
+            f"compose {before_calls}->{after_calls}->{resumed}（关掉时 0 增长，打开后恢复）",
+        )
+
+        # ---- S44 Alt+Tab 不采纳（焦点是否移动交给宿主，这里只断言「没采纳」）
+        page.reload()
+        page.wait_for_function("() => window.__harnessReady === true", timeout=30000)
+        page.wait_for_timeout(300)
+        reset("")
+        h("setComposeMode('ok')")
+        page.focus('[data-composer-input]')
+        page.evaluate(
+            """() => {
+                window.__keys = [];
+                window.addEventListener('keydown', (event) => {
+                    window.__keys.push({ key: event.key, alt: event.altKey, trusted: event.isTrusted });
+                }, true);
+            }"""
+        )
+        h("typeLive('这段日志', {delay: 30})")
+        chip_before = None
+        for _ in range(12):
+            page.wait_for_timeout(300)
+            chip_before = page.evaluate(
+                """() => { const n = document.querySelector('[data-composer-quill="dock-suggestion"]'); return n ? n.textContent.slice(0, 16) : null }"""
+            )
+            if chip_before:
+                break
+        before_alt = h("draft()")
+        page.evaluate("() => { window.__harnessInserted = null; window.__harnessSetDraft = null }")
+        page.keyboard.press("Alt+Tab")
+        page.wait_for_timeout(300)
+        after_alt = h("draft()")
+        seen = page.evaluate("() => window.__keys || []")
+        applied = page.evaluate("() => ({ inserted: window.__harnessInserted, setDraft: window.__harnessSetDraft })")
+        record(
+            "S44 Alt+Tab 不采纳",
+            bool(chip_before) and after_alt == before_alt and applied["inserted"] is None and applied["setDraft"] is None,
+            f"草稿 {before_alt!r}→{after_alt!r} applied={applied} 收到的按键={seen[-2:]}",
+        )
+        h("type('')")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()

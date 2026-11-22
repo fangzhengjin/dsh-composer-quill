@@ -1,6 +1,6 @@
 # 开发与验证
 
-> 适用版本：0.31.45 ｜ 无构建步骤：宿主与浏览器两端都是手写 ESM
+> 适用版本：0.31.46 ｜ 无构建步骤：宿主与浏览器两端都是手写 ESM
 
 
 ## 1. 目录结构
@@ -42,7 +42,7 @@ $dsh = "$env:USERPROFILE\.dsh\desktop-preview-test\app\resources\runtime\cli\bin
 # 输出 dsh web: http://127.0.0.1:PORT/?token=…  → 用 Playwright 打开
 ```
 
-**改动必须彻底重启 DSH**：客户端 bundle 按 rev 钉在启动图里，刷新页面仍加载旧包。日志里的 `build` 字段是唯一可靠的版本证据：
+**改完客户端代码按 `Ctrl+R` 即可**（profile 里是指向本仓库的软链时）。验证方法不是看 `build`——不抬版本号时新旧包报同一个字符串——而是看 `apply` beacon 的 `detail`：它带上这版注册的挂载点。
 
 ```powershell
 Get-Content "$env:USERPROFILE\.dsh\composer-quill.log" -Tail 20 | Select-String '"build"'
@@ -57,7 +57,7 @@ Get-Content "$env:USERPROFILE\.dsh\composer-quill.log" -Tail 20 | Select-String 
 # 依赖会变成 link:C:/…/dsh-composer-quill，node_modules 里是指向仓库的链接
 ```
 
-之后：改代码 → `node smoke-test.mjs` → **重启 DSH**。不用 `npm publish`，也不用重装。
+之后：改代码 → `node smoke-test.mjs` → **`Ctrl+R`**。不用 `npm publish`，也不用重装。
 
 两条纪律，都是踩过的坑：
 
@@ -81,7 +81,7 @@ npm run test:log -- 1             # 汇总最近 1 小时的诊断日志
 
 ### 3.1 单测（`npm test`）
 
-不依赖 DSH，直接用假的 `ctx` / 假 `res` 驱动真实代码。110 条用例分十五组：
+不依赖 DSH，直接用假的 `ctx` / 假 `res` 驱动真实代码。114 条用例分十六组：
 
 - **host: pure helpers** — 解析器、`transcriptOf`、`sessionDigest`、语言闸、输入清洗、缓存开关
 - **host: routes and streaming** — 鉴权矩阵、SSE 帧时序、缓存命中、单飞、日志轮转
@@ -100,7 +100,7 @@ npm run test:log -- 1             # 汇总最近 1 小时的诊断日志
 cd dev/harness; node node_modules/esbuild/bin/esbuild src.js --bundle --format=iife --target=chrome120 --outfile=bundle.js
 ```
 
-46 条断言（S1–S42）覆盖：逐字输入、快速连打、Esc 抑制、失败重试、长草稿、切会话、超短草稿、空行锚点、历史补全、整条采纳、清空重弹、行常驻、覆盖区间零调用、流式增长、采纳反馈重排、切回会话复用，以及三条按真实使用节奏写的回归：
+48 条断言（S1–S44）覆盖：逐字输入、快速连打、Esc 抑制、失败重试、长草稿、切会话、超短草稿、空行锚点、历史补全、整条采纳、清空重弹、行常驻、覆盖区间零调用、流式增长、采纳反馈重排、切回会话复用，以及三条按真实使用节奏写的回归：
 
 - **S23 快速连打期间的取消上限** — 打字速度超过模型首字节时，取消次数不得超过「时长 ÷ 重触发间隔 + 2」
 - **S24 停手后灰字稳定** — 停手后必须出灰字，且 2.4 秒内既不消失也不再发请求
@@ -152,6 +152,11 @@ python dev/verify_with_retry.py --attempts 3 --threshold 2
 记账文件 `dev/flake-ledger.json` 是本地状态（已 gitignore），只记次数，不记时间戳——它要回答的问题是「这条到底抖了几次」，不是「什么时候抖的」。
 
 严格模式仍然是 `npm run test:ui`（跑一次，红就是红）；重试入口用于日常开发，避免每次都被同一条时序问题打断。
+
+### 设置页的挂载
+
+设置卡片注册在 `settings.section`（不是 `settings.general.item`）：它是设置导航里独立的一节，
+自带 `id` / `order` / `label`。夹具里 `showSettings()` 按这个名字找组件。
 
 ### 二分场景套件
 

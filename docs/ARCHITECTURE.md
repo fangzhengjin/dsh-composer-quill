@@ -1,6 +1,6 @@
 # 架构设计
 
-> 适用版本：0.31.45 ｜ 代码：`index.js`（宿主，约 1840 行）、`client.js`（浏览器，约 2540 行）
+> 适用版本：0.31.46 ｜ 代码：`index.js`（宿主，约 1840 行）、`client.js`（浏览器，约 2540 行）
 
 ## 1. 定位与边界
 
@@ -25,14 +25,15 @@
 **浏览器侧（`client.js`，由 `__ModuleLoader__` 注入）**
 
 - `conversation.input.dock` —— 常驻状态行
-- `settings.general.item` —— 设置卡片
+- `settings.section` —— 设置页里独立的一节（`id: composer-quill`，`order: 30`，导航名走 `nav` 文案）
+- `settings.section.icon` —— 那一行的图标（id 必须与分节 id 一致，否则不渲染）
 - `createGhostStore()` —— 建议状态机
 - `createGhostLayer()` —— 建议层，嵌在输入框内，随宿主裁切
 - `localStorage` —— 建议持久化与设置
 
 补写的 prompt 只有一份（`composePrompt()`），与传输方式无关：SSE 与 JSON 两条路径传入同一组输入，模型看到的是同一个问题。
 
-两半通过 `package.json` 的 `dsh.client` 字段装配。浏览器侧按 **rev 钉在启动图里**：改代码必须重启 DSH，刷新页面不够。
+两半通过 `package.json` 的 `dsh.client` 字段装配。浏览器侧在**软链安装**时直接读工作目录的 `client.js`，改完 `Ctrl+R` 即生效；npm 安装的那份是拷贝，改代码要重装或重启。
 
 
 ## 3. 请求生命周期

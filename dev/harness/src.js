@@ -137,7 +137,7 @@ async function main() {
 
   // The settings row is registered on its own slot: mount it on demand.
   function showSettings() {
-    const entry = registered.find((item) => item.options.name === 'settings.general.item')
+    const entry = registered.find((item) => item.options.name === 'settings.section')
     if (!entry) return false
     let host = document.getElementById('settings-host')
     if (!host) {

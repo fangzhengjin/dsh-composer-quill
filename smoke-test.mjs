@@ -677,10 +677,10 @@ const ctx = {
 
 await moduleExports.apply(ctx)
 
-check('registers the composer dock and the settings row', () => {
+check('registers the composer dock and the settings section', () => {
   const names = registered.map((entry) => entry.name)
   assert.ok(names.includes('conversation.input.dock'), 'missing conversation.input.dock')
-  assert.ok(names.includes('settings.general.item'), 'missing settings.general.item')
+  assert.ok(names.includes('settings.section'), 'missing settings.general.item')
 })
 
 check('every registration carries id, order and locale', () => {
@@ -821,17 +821,23 @@ check('hydrate shows a stored suggestion without a request', () => {
 
 check('normalizeConfig clamps and defaults every field', () => {
   const { normalizeConfig } = moduleExports.__test
-  assert.deepEqual(normalizeConfig(null), { enabled: true, mode: 'auto', language: 'auto', debounceMs: 120, timeoutMs: 20000 })
+  assert.deepEqual(normalizeConfig(null), { nextEnabled: true, composeEnabled: true, mode: 'auto', language: 'auto', debounceMs: 120, timeoutMs: 20000 })
   assert.equal(normalizeConfig({ language: 'zh' }).language, 'zh')
   assert.equal(normalizeConfig({ language: 'klingon' }).language, 'auto')
+  // A single legacy flag means "both were off".
   assert.deepEqual(normalizeConfig({ enabled: false, mode: 'manual', debounceMs: 9999, timeoutMs: 10 }),
-    { enabled: false, mode: 'manual', language: 'auto', debounceMs: 2000, timeoutMs: 3000 })
+    { nextEnabled: false, composeEnabled: false, mode: 'manual', language: 'auto', debounceMs: 2000, timeoutMs: 3000 })
+  // Per-feature flags win over the legacy one, and each keeps its own value.
+  assert.deepEqual(
+    (({ nextEnabled, composeEnabled }) => ({ nextEnabled, composeEnabled }))(normalizeConfig({ enabled: false, composeEnabled: true })),
+    { nextEnabled: false, composeEnabled: true },
+  )
   assert.deepEqual(normalizeConfig({ mode: 'nonsense', debounceMs: 'abc' }).mode, 'auto')
   assert.equal(normalizeConfig({ debounceMs: '150' }).debounceMs, 150)
 })
 
 check('settings row renders the mode, pause and timeout controls', () => {
-  const tree = unwrap(entryOf('settings.general.item').component({
+  const tree = unwrap(entryOf('settings.section').component({
     t: (key) => key,
     config: { subscribe: () => () => {}, getSnapshot: () => ({ enabled: true, mode: 'auto', debounceMs: 120, timeoutMs: 20000 }), set: () => {} },
   }))
@@ -2072,6 +2078,25 @@ group('client: claim')
 
   check('only a compose claim can block the poll', () => {
     assert.equal(api.claimBlocksRetrigger({ key: 'next|', until: 10_000 }, '', 9_000), false)
+  })
+}
+
+group('client: keys')
+
+{
+  const api = globalThis.__ghostFactory.factory((name) => {
+    if (name === 'react') return fakeReact
+    throw new Error(`unexpected require(${name})`)
+  }).__test
+
+  check('only a bare Tab accepts', () => {
+    assert.equal(api.isAcceptKey({ key: 'Tab' }), true)
+    assert.equal(api.isAcceptKey({ key: 'Tab', shiftKey: true }), false)
+    assert.equal(api.isAcceptKey({ key: 'Tab', altKey: true }), false)
+    assert.equal(api.isAcceptKey({ key: 'Tab', ctrlKey: true }), false)
+    assert.equal(api.isAcceptKey({ key: 'Tab', metaKey: true }), false)
+    assert.equal(api.isAcceptKey({ key: 'Enter' }), false)
+    assert.equal(api.isAcceptKey(null), false)
   })
 }
 

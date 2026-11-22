@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.45'
+    const BUILD = '0.31.46'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -75,8 +75,16 @@ const COVERED_DEBOUNCE_MS = 1200
       'hint.history': '按 Tab 补全（历史）',
       'hint.position': '第 {index}/{total} 条，←/→ 切换',
       'status.prefix': '建议：',
+      'nav': '续笔',
       'settings.title': '续笔',
       'settings.description': '回合结束后预测下一句，打字时补写并顺带整理草稿；Tab 采用，绝不自动发送',
+      'settings.section.capability': '能力',
+      'settings.section.behaviour': '行为',
+      'settings.section.pace': '节奏',
+      'settings.section.keys': '键盘',
+      'settings.section.learning': '学习',
+      'settings.next': '下一句',
+      'settings.compose': '补写',
       'settings.mode': '模式',
       'settings.mode.auto': '自动',
       'settings.mode.manual': '仅手动',
@@ -87,6 +95,7 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.learning': '采纳反馈',
       'settings.learningEmpty': '还没有样本（Tab 采纳 / Esc 忽略都会计入）',
       'settings.manualHint': '手动触发：Ctrl+Shift+Space',
+      'settings.keyboard': '键盘：Tab 采纳；Alt+Tab 不采纳，把焦点交还宿主',
     }
     const en = {
       'hint.accept': 'Press Tab to accept',
@@ -104,8 +113,16 @@ const COVERED_DEBOUNCE_MS = 1200
       'hint.history': 'Press Tab to complete from history',
       'hint.position': 'Suggestion {index}/{total}, ←/→ to switch',
       'status.prefix': 'Completion: ',
+      'nav': 'Quill',
       'settings.title': 'Quill — composer completion',
       'settings.description': 'Predicts your next message, and finishes plus tidies the draft while you type; Tab applies, nothing is sent automatically',
+      'settings.section.capability': 'Capabilities',
+      'settings.section.behaviour': 'Behaviour',
+      'settings.section.pace': 'Timing',
+      'settings.section.keys': 'Keyboard',
+      'settings.section.learning': 'Learning',
+      'settings.next': 'Next message',
+      'settings.compose': 'Completion',
       'settings.mode': 'Mode',
       'settings.mode.auto': 'Automatic',
       'settings.mode.manual': 'Manual only',
@@ -116,6 +133,7 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.learning': 'Acceptance feedback',
       'settings.learningEmpty': 'no samples yet (Tab accepts, Esc dismisses)',
       'settings.manualHint': 'Trigger manually: Ctrl+Shift+Space',
+      'settings.keyboard': 'Keyboard: Tab accepts; Alt+Tab keeps the suggestion and moves focus',
     }
 
     function token() {
@@ -290,6 +308,9 @@ const COVERED_DEBOUNCE_MS = 1200
       const send = (gate) => ({ verdict: 'send', gate, draftNow, key, effects })
 
       if (!live.enabled || live.sessionId === null) return stop('G1')
+      // Per-feature switches: the mode itself may be off while the other one runs.
+      if (mode === 'next' && live.nextEnabled === false) return stop('G0')
+      if (mode === 'compose' && live.composeEnabled === false) return stop('G0')
       if (now < (input?.blockedUntil ?? 0)) return stop('G2')
 
       const served = input?.served ?? { key: '', at: 0 }
@@ -387,6 +408,17 @@ const COVERED_DEBOUNCE_MS = 1200
       if (typeof claim.key !== 'string' || typeof claim.until !== 'number') return false
       if (now >= claim.until) return false
       return claim.key === `compose|${text}`
+    }
+
+    /**
+     * Tab accepts, but only the bare key: Shift+Tab, Alt+Tab and any Ctrl/Meta combo
+     * belong to the host's focus navigation. Without an escape hatch a keyboard user
+     * would have to dismiss the suggestion to move focus at all.
+     */
+    function isAcceptKey(event) {
+      if (event === null || typeof event !== 'object') return false
+      if (event.key !== 'Tab') return false
+      return event.shiftKey !== true && event.altKey !== true && event.ctrlKey !== true && event.metaKey !== true
     }
 
     /**
@@ -619,7 +651,8 @@ const COVERED_DEBOUNCE_MS = 1200
     const CONFIG_KEY = 'dsh.composer-quill.config'
     const LEGACY_KEY = 'dsh.composer-quill.enabled'
     const DEFAULT_CONFIG = Object.freeze({
-      enabled: true,
+      nextEnabled: true,     // prediction for an empty composer
+      composeEnabled: true,  // completion while typing
       mode: 'auto',        // 'auto' | 'manual'
     language: 'auto',    // 'auto' (follow the system) | 'zh' | 'en'
       debounceMs: COMPOSE_DEBOUNCE_MS,
@@ -634,8 +667,11 @@ const COVERED_DEBOUNCE_MS = 1200
         return Math.min(max, Math.max(min, Math.round(number)))
       }
       const source = raw !== null && typeof raw === 'object' ? raw : {}
+      // Migration: older builds stored a single flag. It meant "both were on".
+      const legacyOn = source.enabled !== false
       return {
-        enabled: source.enabled !== false,
+        nextEnabled: source.nextEnabled !== undefined ? source.nextEnabled !== false : legacyOn,
+        composeEnabled: source.composeEnabled !== undefined ? source.composeEnabled !== false : legacyOn,
         mode: source.mode === 'manual' ? 'manual' : 'auto',
       language: source.language === 'zh' || source.language === 'en' ? source.language : 'auto',
         debounceMs: clamp(source.debounceMs, 80, 2000, DEFAULT_CONFIG.debounceMs),
@@ -657,7 +693,7 @@ const COVERED_DEBOUNCE_MS = 1200
         const stored = window.localStorage.getItem(CONFIG_KEY)
         if (stored !== null && stored !== '') return normalizeConfig(JSON.parse(stored))
         const legacy = window.localStorage.getItem(LEGACY_KEY)
-        if (legacy === '0') return { ...DEFAULT_CONFIG, enabled: false }
+        if (legacy === '0') return { ...DEFAULT_CONFIG, nextEnabled: false, composeEnabled: false }
       } catch {
         // Corrupt or unavailable storage: defaults.
       }
@@ -1852,7 +1888,7 @@ const COVERED_DEBOUNCE_MS = 1200
           return
         }
         if (!visible) return
-        if (event.key === 'Tab' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+        if (isAcceptKey(event)) {
           if (acceptRef.current(true)) {
             event.preventDefault()
             event.stopPropagation()
@@ -1884,7 +1920,7 @@ const COVERED_DEBOUNCE_MS = 1200
      */
     function useGhostRequests(input) {
       const {
-        ghost, ghostLayer, latest, state, draft, enabled, running, sessionId,
+        ghost, ghostLayer, latest, state, draft, enabled, composeEnabled, running, sessionId,
         dockBooking, sendDock, report, stopTimer, domDraft, refs,
       } = input
       // The caller owns every one of these: the Session effect, the typing effect and
@@ -2081,6 +2117,8 @@ const COVERED_DEBOUNCE_MS = 1200
             now,
             live: {
               enabled: live.enabled,
+              nextEnabled: live.nextEnabled,
+              composeEnabled: live.composeEnabled,
               sessionId: live.sessionId,
               running: live.running,
               draftEmpty: live.draftEmpty,
@@ -2132,7 +2170,7 @@ const COVERED_DEBOUNCE_MS = 1200
   
       const retryTimer = React.useRef(null)
       React.useEffect(() => {
-        if (!enabled || running || sessionId === null) return undefined
+        if (!composeEnabled || running || sessionId === null) return undefined
         if (state.phase !== 'error' || state.kind !== 'compose') return undefined
         if (state.forDraft !== draft || retriedFor.current === draft) return undefined
         retriedFor.current = draft
@@ -2164,7 +2202,7 @@ const COVERED_DEBOUNCE_MS = 1200
           if (typeof window.setInterval !== 'function') return undefined
           const interval = window.setInterval(() => {
             const live = latest.current
-            if (!live.enabled || live.running || live.sessionId === null || live.manual) return
+            if (!live.composeEnabled || live.running || live.sessionId === null || live.manual) return
             if (composing.current) return
             const text = domDraft()
             if (text.trim().length < MIN_DRAFT_CHARS) return
@@ -2203,7 +2241,7 @@ const COVERED_DEBOUNCE_MS = 1200
     /** Turn boundaries and Session switches. */
     function useSessionBoundary(passed) {
       const {
-        sessionId, running, enabled, draftEmpty, settings, request, dismissAll, latest,
+        sessionId, running, nextEnabled, draftEmpty, settings, request, dismissAll, latest,
         ghost, ghostLayer, sendDock, hydrateStored, bumpHistoryEpoch, refs,
       } = passed
       const { previous, composing, hydratedFor, lastRequested, lastCall, retriedFor, notLive, learnedShown } = refs
@@ -2212,7 +2250,7 @@ const COVERED_DEBOUNCE_MS = 1200
           previous.current = { sessionId, running }
           if (prior === null) {
             if (hydrateStored('next', '')) return
-            if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual') request('next', '', true)
+            if (!running && sessionId !== null && nextEnabled && draftEmpty && settings.mode !== 'manual') request('next', '', true)
             return
           }
           if (prior.sessionId !== sessionId) {
@@ -2234,13 +2272,13 @@ const COVERED_DEBOUNCE_MS = 1200
             // Hydrate first, while the store is untouched: coming back to a Session
             // whose conversation has not moved is not a new question, and asking the
             // model again would show "补写中…" for something already known.
-            if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual'
+            if (!running && sessionId !== null && nextEnabled && draftEmpty && settings.mode !== 'manual'
               && hydrateStored('next', '')) {
               ghostLayer.clear()
               return
             }
             dismissAll()
-            if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual') {
+            if (!running && sessionId !== null && nextEnabled && draftEmpty && settings.mode !== 'manual') {
               // Nothing stored: this Session genuinely has no answer yet.
               const shown = ghost.getSnapshot()
               const alreadyShown = shown.sessionId === sessionId && shown.items.length > 0
@@ -2256,7 +2294,7 @@ const COVERED_DEBOUNCE_MS = 1200
             clearSessionSuggestions(sessionId)
             // A retry that was armed for a failed draft is obsolete now.
             retriedFor.current = null
-            if (enabled && draftEmpty && settings.mode !== 'manual') {
+            if (nextEnabled && draftEmpty && settings.mode !== 'manual') {
               if (!hydrateStored('next', '')) request('next', '', true)
             }
           }
@@ -2273,19 +2311,19 @@ const COVERED_DEBOUNCE_MS = 1200
             ghost.cancel()
             ghostLayer.clear()
           }
-        }, [sessionId, running, enabled, draftEmpty, request, dismissAll])
+        }, [sessionId, running, nextEnabled, draftEmpty, request, dismissAll])
     }
 
     /** Typing drives the compose request: debounced on the settled draft. */
     function useTypingRequest(passed) {
       const {
-        draft, enabled, sessionId, running, settings, state, dockBooking, sendDock,
+        draft, composeEnabled, sessionId, running, settings, state, dockBooking, sendDock,
         ghost, hydrateStored, report, request, composing, refs,
       } = passed
       const { lastRequested } = refs
         React.useEffect(() => {
           if (draft.trim() !== '') sendDock({ type: 'typed' })
-          if (!enabled || sessionId === null || running || settings.mode === 'manual') return
+          if (!composeEnabled || sessionId === null || running || settings.mode === 'manual') return
           if (draft.trim().length < MIN_DRAFT_CHARS) {
             if (state.kind === 'compose') ghost.clear(sessionId)
             // Clearing the composer (after accepting, or by hand) must re-arm the
@@ -2344,7 +2382,7 @@ const COVERED_DEBOUNCE_MS = 1200
           if (hydrateStored('compose', draft)) return
           request('compose', draft, false, covered ? COVERED_DEBOUNCE_MS : undefined)
           // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, [draft, enabled, sessionId, running])
+        }, [draft, composeEnabled, sessionId, running])
     }
 
     /** One diagnostic line at mount: which props arrived, and whether the Session exists. */
@@ -2376,7 +2414,9 @@ const COVERED_DEBOUNCE_MS = 1200
       const ghost = props.ghost ?? idleGhost()
       const config = props.config ?? defaultConfig()
       const settings = React.useSyncExternalStore(config.subscribe, config.getSnapshot)
-      const enabled = settings.enabled === true
+      const nextEnabled = settings.nextEnabled === true
+      const composeEnabled = settings.composeEnabled === true
+      const enabled = nextEnabled || composeEnabled
       const state = React.useSyncExternalStore(ghost.subscribe, ghost.getSnapshot)
 
       const sessionId = typeof session?.sessionId === 'string'
@@ -2420,7 +2460,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const retriedFor = React.useRef(null)
       const { booking: dockBooking, send: sendDock } = useDockBooking()
       const latest = React.useRef({})
-      latest.current = { sessionId, running, enabled, draft, draftEmpty, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
+      latest.current = { sessionId, running, enabled, nextEnabled, composeEnabled, draft, draftEmpty, debounceMs: settings.debounceMs, timeoutMs: settings.timeoutMs, manual: settings.mode === 'manual' }
       const layer = React.useRef(null)
       if (layer.current === null) layer.current = createGhostLayer()
       const ghostLayer = layer.current
@@ -2461,13 +2501,13 @@ const COVERED_DEBOUNCE_MS = 1200
       const learnedShown = React.useRef(null)
       const dockRefs = { timer, lastRequested, retriedFor, composing, notLive, servedFromStore, lastCall, historyRef }
       const { request } = useGhostRequests({
-        ghost, ghostLayer, latest, state, draft, enabled, running, sessionId,
+        ghost, ghostLayer, latest, state, draft, enabled, composeEnabled, running, sessionId,
         dockBooking, sendDock, report, stopTimer, domDraft, refs: dockRefs,
       })
 
       // Turn boundary and Session switch drive the next-message prediction.
       useSessionBoundary({
-        sessionId, running, enabled, draftEmpty, settings, request, dismissAll, latest,
+        sessionId, running, nextEnabled, draftEmpty, settings, request, dismissAll, latest,
         ghost, ghostLayer, sendDock, hydrateStored, bumpHistoryEpoch,
         refs: { previous, composing, hydratedFor, lastRequested, lastCall, retriedFor, notLive, learnedShown },
       })
@@ -2475,7 +2515,7 @@ const COVERED_DEBOUNCE_MS = 1200
       // Typing drives the compose request (debounced on the settled draft).
       useTypingRequest({
         draft, enabled, sessionId, running, settings, state, dockBooking, sendDock,
-        ghost, hydrateStored, report, request, composing, refs: { lastRequested },
+        ghost, hydrateStored, report, request, composing, composeEnabled, refs: { lastRequested },
       })
 
       /**
@@ -2511,8 +2551,8 @@ const COVERED_DEBOUNCE_MS = 1200
         }
       })()
       const alreadyInEditor = proposalIsStale(current, liveText)
-      const nextActive = enabled && !running && draftEmpty && state.kind === 'next' && current !== '' && !alreadyInEditor
-      const composeActive = enabled && !running
+      const nextActive = nextEnabled && !running && draftEmpty && state.kind === 'next' && current !== '' && !alreadyInEditor
+      const composeActive = composeEnabled && !running
         && state.kind === 'compose'
         && state.sessionId === sessionId
         && composed !== ''
@@ -2698,14 +2738,14 @@ const COVERED_DEBOUNCE_MS = 1200
       // (a proposal, "nothing to add", or a failure).
       const answeredForThisDraft = (state.phase === 'empty' || state.phase === 'error' || state.phase === 'ready')
         && (state.forDraft === draftBase || state.forDraft === draft)
-      const pendingCompose = enabled && !running && statusText === ''
+      const pendingCompose = composeEnabled && !running && statusText === ''
         && sessionId !== null
         && state.sessionId === sessionId
         && draft.trim().length >= MIN_DRAFT_CHARS
         && !answeredForThisDraft
       // An empty composer is waiting on the next-message prediction, which is a
       // model call too: say so instead of looking idle.
-      const pendingNext = enabled && !running && statusText === ''
+      const pendingNext = nextEnabled && !running && statusText === ''
         && sessionId !== null
         && state.sessionId === sessionId
         && settings.mode !== 'manual'
@@ -2782,7 +2822,13 @@ const COVERED_DEBOUNCE_MS = 1200
       const { t } = props
       const config = props.config ?? defaultConfig()
       const settings = React.useSyncExternalStore(config.subscribe, config.getSnapshot)
-      const enabled = settings.enabled === true
+      const nextEnabled = settings.nextEnabled === true
+      const composeEnabled = settings.composeEnabled === true
+
+      // One visual language: a quiet label on the left, the control on the right.
+      const labelStyle = { color: 'var(--dsw-alias-label-secondary)', fontSize: '12px', lineHeight: '18px' }
+      const hintStyle = { color: 'var(--dsw-alias-label-tertiary, #8a8f98)', fontSize: '11px', lineHeight: '17px' }
+      const sectionStyle = { color: 'var(--dsw-alias-label-tertiary, #8a8f98)', fontSize: '11px', lineHeight: '16px', letterSpacing: '0.04em', padding: '12px 0 4px' }
       const fieldStyle = {
         height: '28px',
         padding: '0 8px',
@@ -2792,98 +2838,132 @@ const COVERED_DEBOUNCE_MS = 1200
         color: 'var(--dsw-alias-label-primary)',
         font: '12px/16px var(--dsw-font-sans, system-ui, sans-serif)',
       }
-      const labelStyle = { color: 'var(--dsw-alias-label-secondary)', fontSize: '12px', whiteSpace: 'nowrap' }
+      const section = (text) => h('div', { style: sectionStyle }, text)
+      const row = (label, control) => h('div', {
+        style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', minHeight: '32px' },
+      }, h('span', { style: labelStyle }, label), control)
+      const switchButton = (on, label, onToggle, key) => h('button', {
+        type: 'button',
+        role: 'switch',
+        'data-composer-quill': key,
+        'aria-checked': on,
+        'aria-label': label,
+        title: label,
+        onClick: onToggle,
+        style: {
+          flex: 'none',
+          width: '36px',
+          height: '20px',
+          borderRadius: '999px',
+          border: 'none',
+          padding: '2px',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: on ? 'flex-end' : 'flex-start',
+          background: on ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)',
+          transition: 'background 120ms ease',
+        },
+      }, h('span', {
+        style: { width: '16px', height: '16px', borderRadius: '50%', background: 'var(--dsw-alias-bg-overlay)' },
+      }))
+
+      const learning = learningSummary()
+      const learningText = learning.shown === 0
+        ? t('settings.learningEmpty')
+        : `${learning.accepted}/${learning.shown}（${Math.round(learning.rate * 100)}%）`
+
       return h('div', {
         'data-composer-quill': 'settings-row',
-        style: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '14px 0' },
+        style: { display: 'flex', flexDirection: 'column', maxWidth: '520px', padding: '4px 0 8px' },
       },
-      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '24px' } },
-        h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 } },
-          h('div', { style: { color: 'var(--dsw-alias-label-primary)', fontSize: '14px', lineHeight: '20px' } }, t('settings.title')),
-          h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '12px', lineHeight: '18px' } }, t('settings.description'))),
-        h('button', {
-          type: 'button',
-          role: 'switch',
-          'aria-checked': enabled,
-          'aria-label': t('settings.title'),
-          style: {
-            flex: 'none',
-            width: '36px',
-            height: '20px',
-            borderRadius: '999px',
-            border: 'none',
-            padding: '2px',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: enabled ? 'flex-end' : 'flex-start',
-            background: enabled ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)',
-            transition: 'background 120ms ease',
-          },
-          onClick: () => config.set({ enabled: !enabled }),
-        }, h('span', {
-          style: { width: '16px', height: '16px', borderRadius: '50%', background: 'var(--dsw-alias-bg-overlay)' },
-        }))),
-      h('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px', opacity: enabled ? 1 : 0.5 } },
-        h('span', { style: labelStyle }, t('settings.mode')),
-        h('select', {
+        h('div', { style: { color: 'var(--dsw-alias-label-primary)', fontSize: '14px', lineHeight: '20px' } }, t('settings.title')),
+        h('div', { style: { ...labelStyle, marginTop: '2px' } }, t('settings.description')),
+
+        section(t('settings.section.capability')),
+        row(t('settings.next'), switchButton(nextEnabled, t('settings.next'), () => config.set({ nextEnabled: !nextEnabled }), 'settings-next')),
+        row(t('settings.compose'), switchButton(composeEnabled, t('settings.compose'), () => config.set({ composeEnabled: !composeEnabled }), 'settings-compose')),
+
+        section(t('settings.section.behaviour')),
+        row(t('settings.mode'), h('select', {
           'data-composer-quill': 'settings-mode',
           'aria-label': t('settings.mode'),
           value: settings.mode,
-          disabled: !enabled,
           onChange: (event) => config.set({ mode: event.target.value }),
-          style: fieldStyle,
+          style: { ...fieldStyle, width: '132px' },
         },
-        h('option', { value: 'auto' }, t('settings.mode.auto')),
-        h('option', { value: 'manual' }, t('settings.mode.manual'))),
-        h('span', { style: labelStyle }, t('settings.language')),
-        h('select', {
+          h('option', { value: 'auto' }, t('settings.mode.auto')),
+          h('option', { value: 'manual' }, t('settings.mode.manual')))),
+        row(t('settings.language'), h('select', {
           'data-composer-quill': 'settings-language',
           'aria-label': t('settings.language'),
           value: settings.language,
-          disabled: !enabled,
           onChange: (event) => config.set({ language: event.target.value }),
-          style: fieldStyle,
+          style: { ...fieldStyle, width: '132px' },
         },
-        h('option', { value: 'auto' }, `${t('settings.language.auto')}（${browserLocale() || 'zh'}）`),
-        h('option', { value: 'zh' }, '中文'),
-        h('option', { value: 'en' }, 'English')),
-        h('span', { style: labelStyle }, t('settings.debounce')),
-        h('input', {
-          'data-composer-quill': 'settings-debounce',
-          'aria-label': t('settings.debounce'),
-          type: 'number',
-          min: 80,
-          max: 2000,
-          step: 50,
-          value: settings.debounceMs,
-          disabled: !enabled,
-          onChange: (event) => config.set({ debounceMs: Number(event.target.value) }),
-          style: { ...fieldStyle, width: '84px' },
-        }),
-        h('span', { style: labelStyle }, t('settings.timeout')),
-        h('input', {
-          'data-composer-quill': 'settings-timeout',
-          'aria-label': t('settings.timeout'),
-          type: 'number',
-          min: 3000,
-          max: 60000,
-          step: 1000,
-          value: settings.timeoutMs,
-          disabled: !enabled,
-          onChange: (event) => config.set({ timeoutMs: Number(event.target.value) }),
-          style: { ...fieldStyle, width: '96px' },
-        })),
-      h('div', { style: { color: 'var(--dsw-alias-label-tertiary, #8a8f98)', fontSize: '11px' } },
-        `${t('settings.learning')}：${(() => {
-          const summary = learningSummary()
-          if (summary.shown === 0) return t('settings.learningEmpty')
-          return `${summary.accepted}/${summary.shown}（${Math.round(summary.rate * 100)}%）`
-        })()}`),
-      h('div', { style: { color: 'var(--dsw-alias-label-tertiary, #8a8f98)', fontSize: '11px' } }, t('settings.manualHint')))
+          h('option', { value: 'auto' }, `${t('settings.language.auto')}（${browserLocale() || 'zh'}）`),
+          h('option', { value: 'zh' }, '中文'),
+          h('option', { value: 'en' }, 'English'))),
+
+        section(t('settings.section.pace')),
+        row(t('settings.debounce'), h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+          h('input', {
+            'data-composer-quill': 'settings-debounce',
+            'aria-label': t('settings.debounce'),
+            type: 'number',
+            min: 80,
+            max: 2000,
+            step: 50,
+            value: settings.debounceMs,
+            onChange: (event) => config.set({ debounceMs: Number(event.target.value) }),
+            style: { ...fieldStyle, width: '84px' },
+          }),
+          h('span', { style: hintStyle }, 'ms'))),
+        row(t('settings.timeout'), h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+          h('input', {
+            'data-composer-quill': 'settings-timeout',
+            'aria-label': t('settings.timeout'),
+            type: 'number',
+            min: 3000,
+            max: 60000,
+            step: 1000,
+            value: settings.timeoutMs,
+            onChange: (event) => config.set({ timeoutMs: Number(event.target.value) }),
+            style: { ...fieldStyle, width: '96px' },
+          }),
+          h('span', { style: hintStyle }, 'ms'))),
+
+        section(t('settings.section.keys')),
+        h('div', { style: hintStyle }, t('settings.keyboard')),
+        h('div', { style: hintStyle }, t('settings.manualHint')),
+
+        section(t('settings.section.learning')),
+        h('div', { style: hintStyle }, `${t('settings.learning')}：${learningText}`))
     }
 
+    
     /**
+     * Navigation glyph for this plugin's settings section. The shell wraps it in a
+     * 16px box and paints it in the row's colour, so the paths carry no fill of
+     * their own and use currentColor.
+     */
+    function GhostSettingsIcon(props) {
+      const size = props?.size ?? 16
+      return h('svg', {
+        width: size,
+        height: size,
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.3,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+      },
+      h('path', { d: 'M12.6 3.4C9.1 3.5 5.4 6.1 3.6 12.4c6.3-1.8 8.9-5.5 9-9Z' }),
+      h('path', { d: 'M3.6 12.4 8.6 7.4' }))
+    }
+/**
      * Keeps a render failure inside this plugin: the composer must never break
      * because of a suggestion feature.
      */
@@ -2912,7 +2992,9 @@ const COVERED_DEBOUNCE_MS = 1200
     const inject = ['slots', 'locale']
 
     async function apply(ctx) {
-      report('apply', { detail: JSON.stringify({ slots: Boolean(ctx.slots), locale: Boolean(ctx.locale) }) })
+      // The beacon names the shape this bundle registers, so a reload can be told apart
+      // from the previous build without guessing.
+      report('apply', { detail: JSON.stringify({ slots: Boolean(ctx.slots), locale: Boolean(ctx.locale), settings: 'settings.section', icon: Boolean(ctx.slots) }) })
       ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'composer-quill: dictionaries')
 
       const ghost = createGhostStore()
@@ -2926,13 +3008,23 @@ const COVERED_DEBOUNCE_MS = 1200
         inject: () => ({ ghost, config }),
       }, GhostDockEntry))
 
-      ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-        name: 'settings.general.item',
+      // Its own section in the Settings nav, not an item inside General: the card has
+      // five groups and a nav label of its own.
+      ctx.slots.inject('settings.section', () => ctx.slots.register({
+        name: 'settings.section',
         id: 'composer-quill',
-        order: 22,
+        order: 30,
+        label: () => ctx.locale.bind(NS)('nav'),
         locale: NS,
         inject: () => ({ config }),
       }, GhostSettingsEntry))
+
+      ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+        name: 'settings.section.icon',
+        id: 'composer-quill',
+        order: 30,
+        locale: NS,
+      }, GhostSettingsIcon))
 
       return () => {
         ghost.clear()
@@ -2940,6 +3032,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
