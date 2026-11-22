@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.44'
+    const BUILD = '0.31.45'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -65,6 +65,7 @@ const COVERED_DEBOUNCE_MS = 1200
       'hint.replace': '按 Tab 采用改写',
       'hint.pending': '补写中…',
       'hint.error': '建议失败',
+      'hint.empty': '已补写 · 无待改项',
       'hint.accepted': '已采纳',
       'hint.undo': '撤销',
       'hint.retry': '重试',
@@ -93,6 +94,7 @@ const COVERED_DEBOUNCE_MS = 1200
       'hint.replace': 'Press Tab to use the rewrite',
       'hint.pending': 'Composing…',
       'hint.error': 'Suggestion failed',
+      'hint.empty': 'Nothing to change',
       'hint.accepted': 'Applied',
       'hint.undo': 'Undo',
       'hint.retry': 'Retry',
@@ -382,6 +384,7 @@ const COVERED_DEBOUNCE_MS = 1200
     function statusChipKind(input) {
       if (input?.pending === true) return 'pending'
       if (typeof input?.failure === 'string' && input.failure !== '') return 'error'
+      if (input?.empty === true) return 'empty'
       if (input?.undo === true) return 'undo'
       if (typeof input?.suggestion === 'string' && input.suggestion !== '') return 'suggestion'
       return 'hint'
@@ -1511,7 +1514,7 @@ const COVERED_DEBOUNCE_MS = 1200
        */
       function renderStatusChip(input) {
         const { t, hintKey, statusText, failureText, position, running, chipStyle } = input
-        const kind = statusChipKind({ pending: input.pendingAny, failure: failureText, undo: input.undoReady === true, suggestion: statusText })
+        const kind = statusChipKind({ pending: input.pendingAny, failure: failureText, empty: input.emptyReady === true, undo: input.undoReady === true, suggestion: statusText })
         if (kind === 'pending') {
           return h('span', {
             'data-composer-quill': 'dock-pending',
@@ -1527,6 +1530,12 @@ const COVERED_DEBOUNCE_MS = 1200
             onClick: () => input.onRetry(),
             style: { ...chipStyle, borderStyle: 'dashed', opacity: running ? 0.6 : 0.85, cursor: running ? 'default' : 'pointer' },
           }, `${t('hint.error')}：${failureText.length > 60 ? `${failureText.slice(0, 60)}…` : failureText} · ${t(running ? 'hint.retrying' : 'hint.retry')}`)
+        }
+        if (kind === 'empty') {
+          return h('span', {
+            'data-composer-quill': 'dock-empty',
+            style: { ...chipStyle, borderStyle: 'none', opacity: 0.8 },
+          }, t('hint.empty'))
         }
         if (kind === 'undo') {
           return h('button', {
@@ -2566,6 +2575,17 @@ const COVERED_DEBOUNCE_MS = 1200
 
         const [undoOffer, setUndoOffer] = React.useState(null)
 
+        // "补写完成 · 没有需要改的地方" used to be invisible: the store recorded it and the
+        // row fell through to the key hints. Show it once, briefly.
+        const [showEmpty, setShowEmpty] = React.useState(false)
+        React.useEffect(() => {
+          if (state.phase !== 'empty' || state.sessionId !== sessionId) { setShowEmpty(false); return undefined }
+          if (state.forDraft !== draftBase && state.forDraft !== draft) { setShowEmpty(false); return undefined }
+          setShowEmpty(true)
+          const timer = setTimeout(() => setShowEmpty(false), 2500)
+          return () => clearTimeout(timer)
+        }, [state.phase, state.sessionId, state.forDraft, sessionId, draft, draftBase])
+
         // The offer is short-lived: eight seconds, or until the draft moves on.
         React.useEffect(() => {
           if (undoOffer === null) return undefined
@@ -2717,7 +2737,7 @@ const COVERED_DEBOUNCE_MS = 1200
             padding: '0 2px 4px',
             minHeight: '22px',
           },
-        }, renderStatusChip({ t, hintKey, statusText, failureText, position, running, chipStyle, pendingAny, onAccept: () => acceptRef.current(true), onUndo: () => undo(), onRetry: () => retry(), undoReady: undoOffer !== null })),
+        }, renderStatusChip({ t, hintKey, statusText, failureText, position, running, chipStyle, pendingAny, onAccept: () => acceptRef.current(true), onUndo: () => undo(), onRetry: () => retry(), undoReady: undoOffer !== null, emptyReady: showEmpty })),
         h('span', {
           role: 'status',
           'aria-live': 'polite',

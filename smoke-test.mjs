@@ -2042,6 +2042,7 @@ group('client: chip')
   check('the row shows one state, in a fixed order', () => {
     assert.equal(api.statusChipKind({ pending: true, failure: 'x', undo: true, suggestion: 'y' }), 'pending')
     assert.equal(api.statusChipKind({ pending: false, failure: 'x', undo: true, suggestion: 'y' }), 'error')
+    assert.equal(api.statusChipKind({ pending: false, failure: '', empty: true, undo: true, suggestion: 'y' }), 'empty')
     assert.equal(api.statusChipKind({ failure: '', undo: true, suggestion: 'y' }), 'undo')
     assert.equal(api.statusChipKind({ failure: '', undo: false, suggestion: 'y' }), 'suggestion')
     assert.equal(api.statusChipKind({ failure: '', undo: false, suggestion: '' }), 'hint')

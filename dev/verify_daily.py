@@ -931,6 +931,39 @@ def main() -> int:
         h("setComposeMode('ok')")
         h("type('')")
 
+        # ---- S42 「没有需要改的地方」要说出来，2.5 秒后回到按键提示
+        page.reload()
+        page.wait_for_function("() => window.__harnessReady === true", timeout=30000)
+        page.wait_for_timeout(300)
+        h("setComposeMode('unchanged')")
+        page.evaluate("() => window.__harness.setSession('s-empty')")
+        page.wait_for_timeout(200)
+        page.focus('[data-composer-input]')
+        h("typeLive('帮我把这段日志整理一下再发我', {delay: 25})")
+        empty_chip = None
+        for _ in range(16):
+            page.wait_for_timeout(300)
+            empty_chip = page.evaluate(
+                """() => { const n = document.querySelector('[data-composer-quill="dock-empty"]'); return n ? n.textContent : null }"""
+            )
+            if empty_chip:
+                break
+        page.wait_for_timeout(2700)
+        after_ttl = page.evaluate(
+            """() => {
+                const empty = document.querySelector('[data-composer-quill="dock-empty"]');
+                const hint = document.querySelector('[data-composer-quill="dock-hint"]');
+                return { empty: empty ? empty.textContent : null, hint: Boolean(hint) };
+            }"""
+        )
+        record(
+            "S42 没有需要改的地方要说出来",
+            bool(empty_chip) and after_ttl["empty"] is None and after_ttl["hint"],
+            f"先显示 {empty_chip!r}，2.7s 后 empty={after_ttl['empty']!r} hint={after_ttl['hint']}",
+        )
+        h("setComposeMode('ok')")
+        h("type('')")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()

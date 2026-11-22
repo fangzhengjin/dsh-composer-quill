@@ -98,6 +98,7 @@ const labels = {
   'hint.replace': '按 Tab 采用改写',
   'hint.pending': '补写中…',
   'hint.error': '建议失败',
+  'hint.empty': '已补写 · 无待改项',
   'hint.accepted': '已采纳',
   'hint.undo': '撤销',
   'hint.retry': '重试',
