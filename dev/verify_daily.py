@@ -848,6 +848,89 @@ def main() -> int:
         h("setComposeMode('ok')")
         h("type('')")
 
+        # ---- S38 采纳后可撤销，撤销回到采纳前
+        reset("")
+        h("typeLive('这段日志', {delay: 30})")
+        page.wait_for_timeout(1400)
+        before_accept = h("draft()")
+        h("press({key: 'Tab'})")
+        page.wait_for_timeout(300)
+        after_accept = h("draft()")
+        undo_chip = page.evaluate(
+            """() => { const n = document.querySelector('[data-composer-quill="dock-undo"]'); return n ? n.textContent : null }"""
+        )
+        page.evaluate("""() => { const n = document.querySelector('[data-composer-quill="dock-undo"]'); if (n) n.click() }""")
+        page.wait_for_timeout(400)
+        record(
+            "S38 采纳后可撤销",
+            after_accept != before_accept and bool(undo_chip) and h("draft()") == before_accept,
+            f"采纳前={before_accept!r} 采纳后={after_accept[:16]!r} 按钮={undo_chip!r} 撤销后={h('draft()')!r}",
+        )
+
+        # ---- S39 采纳后再打字，撤销入口消失
+        page.wait_for_timeout(300)
+        page.evaluate("""() => { const n = document.querySelector('[data-composer-quill="dock-undo"]'); return Boolean(n) }""")
+        h("type('这')")
+        page.wait_for_timeout(300)
+        undo_after_typing = page.evaluate(
+            """() => { const n = document.querySelector('[data-composer-quill="dock-undo"]'); return n ? n.textContent : null }"""
+        )
+        record(
+            "S39 再打字后撤销入口消失",
+            undo_after_typing is None,
+            f"打字后按钮={undo_after_typing!r} draft={h('draft()')!r}",
+        )
+        h("type('')")
+
+        # ---- S40 失败行可点击重试
+        # 前面几条留下的 claim 与焦点状态会拦掉请求；从干净页面开始，这条测的才是重试本身
+        page.reload()
+        page.wait_for_function("() => window.__harnessReady === true", timeout=30000)
+        page.wait_for_timeout(300)
+        reset("")
+        page.focus('[data-composer-input]')
+        h("setComposeMode('fail-always')")
+        # 用一个没被前面场景用过的草稿：same-draft 的「刚采纳过」保护会拦掉重复请求
+        h("typeLive('帮我把这次的失败重试路径验证一下', {delay: 25})")
+        # 失败 → 自动重试也在飞 → 再失败才落到 error，所以轮询而不是死等
+        error_chip = None
+        for _ in range(16):
+            page.wait_for_timeout(400)
+            error_chip = page.evaluate(
+                """() => { const n = document.querySelector('[data-composer-quill="dock-error"]'); return n ? { text: n.textContent, tag: n.tagName } : null }"""
+            )
+            if error_chip:
+                break
+        before_retry = len([c for c in h("calls") if c.get("mode") == "compose"])
+        page.evaluate("""() => { const n = document.querySelector('[data-composer-quill="dock-error"]'); if (n) n.click() }""")
+        page.wait_for_timeout(700)
+        after_retry = len([c for c in h("calls") if c.get("mode") == "compose"])
+        record(
+            "S40 失败行可点击重试",
+            bool(error_chip) and error_chip["tag"] == "BUTTON" and after_retry > before_retry,
+            f"按钮={error_chip} compose {before_retry}->{after_retry}",
+        )
+
+        # ---- S41 连点重试只多发一次
+        clicked = page.evaluate(
+            """() => {
+                const n = document.querySelector('[data-composer-quill="dock-error"]');
+                if (!n) return false;
+                n.click();
+                n.click();
+                return true;
+            }"""
+        )
+        page.wait_for_timeout(900)
+        after_double = len([c for c in h("calls") if c.get("mode") == "compose"])
+        record(
+            "S41 连点重试只多发一次",
+            clicked and after_double - after_retry <= 2,
+            f"连点后 compose {after_retry}->{after_double}（上限 +2，含失败瞬间的自动重试）",
+        )
+        h("setComposeMode('ok')")
+        h("type('')")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()

@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.43'
+    const BUILD = '0.31.44'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -65,6 +65,10 @@ const COVERED_DEBOUNCE_MS = 1200
       'hint.replace': '按 Tab 采用改写',
       'hint.pending': '补写中…',
       'hint.error': '建议失败',
+      'hint.accepted': '已采纳',
+      'hint.undo': '撤销',
+      'hint.retry': '重试',
+      'hint.retrying': '重试中…',
       'hint.keys': 'Tab 采纳 · Esc 关闭 · Ctrl+Shift+Space 手动',
       'hint.busy': '回答中 · 建议暂停',
       'hint.history': '按 Tab 补全（历史）',
@@ -89,6 +93,10 @@ const COVERED_DEBOUNCE_MS = 1200
       'hint.replace': 'Press Tab to use the rewrite',
       'hint.pending': 'Composing…',
       'hint.error': 'Suggestion failed',
+      'hint.accepted': 'Applied',
+      'hint.undo': 'Undo',
+      'hint.retry': 'Retry',
+      'hint.retrying': 'Retrying…',
       'hint.keys': 'Tab accepts · Esc dismisses · Ctrl+Shift+Space manually',
       'hint.busy': 'Replying · suggestions paused',
       'hint.history': 'Press Tab to complete from history',
@@ -365,6 +373,18 @@ const COVERED_DEBOUNCE_MS = 1200
         default:
           return booking
       }
+    }
+
+    /**
+     * Which state the one-line row shows. Pure, so the precedence is testable: a
+     * failure outranks an undo offer, which outranks a suggestion.
+     */
+    function statusChipKind(input) {
+      if (input?.pending === true) return 'pending'
+      if (typeof input?.failure === 'string' && input.failure !== '') return 'error'
+      if (input?.undo === true) return 'undo'
+      if (typeof input?.suggestion === 'string' && input.suggestion !== '') return 'suggestion'
+      return 'hint'
     }
 
     /**
@@ -1490,26 +1510,39 @@ const COVERED_DEBOUNCE_MS = 1200
        * Pure, so the dock render stays a layout description.
        */
       function renderStatusChip(input) {
-        const { t, hintKey, statusText, failureText, position, running, chipStyle, onAccept } = input
-        if (input.pendingAny) {
+        const { t, hintKey, statusText, failureText, position, running, chipStyle } = input
+        const kind = statusChipKind({ pending: input.pendingAny, failure: failureText, undo: input.undoReady === true, suggestion: statusText })
+        if (kind === 'pending') {
           return h('span', {
             'data-composer-quill': 'dock-pending',
             style: { ...chipStyle, borderStyle: 'dotted', opacity: 0.7 },
           }, t('hint.pending'))
         }
-        if (failureText !== '') {
-          return h('span', {
+        if (kind === 'error') {
+          return h('button', {
+            type: 'button',
             'data-composer-quill': 'dock-error',
             title: failureText,
-            style: { ...chipStyle, borderStyle: 'dashed', opacity: 0.85 },
-          }, `${t('hint.error')}：${failureText.length > 60 ? `${failureText.slice(0, 60)}…` : failureText}`)
+            disabled: running,
+            onClick: () => input.onRetry(),
+            style: { ...chipStyle, borderStyle: 'dashed', opacity: running ? 0.6 : 0.85, cursor: running ? 'default' : 'pointer' },
+          }, `${t('hint.error')}：${failureText.length > 60 ? `${failureText.slice(0, 60)}…` : failureText} · ${t(running ? 'hint.retrying' : 'hint.retry')}`)
         }
-        if (statusText !== '') {
+        if (kind === 'undo') {
+          return h('button', {
+            type: 'button',
+            'data-composer-quill': 'dock-undo',
+            title: t('hint.undo'),
+            onClick: () => input.onUndo(),
+            style: { ...chipStyle, cursor: 'pointer' },
+          }, `${t('hint.accepted')} · ${t('hint.undo')}`)
+        }
+        if (kind === 'suggestion') {
           return h('button', {
             type: 'button',
             'data-composer-quill': 'dock-suggestion',
             title: t(hintKey),
-            onClick: () => onAccept(),
+            onClick: () => input.onAccept(),
             style: { ...chipStyle, cursor: 'pointer' },
           }, `${t(hintKey)}：${statusText.length > 72 ? `${statusText.slice(0, 72)}…` : statusText}${position}`)
         }
@@ -2479,7 +2512,7 @@ const COVERED_DEBOUNCE_MS = 1200
         const live = latest.current
         const insert = (text) => typeof inputActions?.insertText === 'function'
           && inputActions.insertText(text, inputActions.captureInsertion?.()) !== false
-        const afterInsert = (applied) => {
+        const afterInsert = (applied, path) => {
           const shown = learnedShown.current
           if (shown !== null && shown.consumed !== true) {
             shown.consumed = true
@@ -2491,12 +2524,15 @@ const COVERED_DEBOUNCE_MS = 1200
           lastRequested.current = applied
           ghost.clear(live.sessionId ?? undefined)
           ghostLayer.clear()
+          // Keep what it took to get here: the chip offers undo for a few seconds, and the
+          // native undo stack only covers the insertText path.
+          setUndoOffer({ before: live.draft, after: applied, at: Date.now(), sessionId: live.sessionId, path })
           editorEl()?.focus()
           return true
         }
 
         if (nextActive) {
-          return insert(current) ? afterInsert(current) : false
+          return insert(current) ? afterInsert(current, 'insert') : false
         }
         if (!composeActive) {
           if (historyActive && historyMatch !== null) {
@@ -2506,16 +2542,16 @@ const COVERED_DEBOUNCE_MS = 1200
             // with the whole suggestion instead.
             if (caretPlacement() === 'inside' && typeof inputActions?.setDraft === 'function') {
               const whole = `${live.draft}${chunk}`
-              return inputActions.setDraft(whole) !== false ? afterInsert(whole) : false
+              return inputActions.setDraft(whole) !== false ? afterInsert(whole, 'setDraft') : false
             }
-            return insert(chunk) ? afterInsert(latest.current.draft + chunk) : false
+            return insert(chunk) ? afterInsert(latest.current.draft + chunk, 'insert') : false
           }
           return false
         }
         if (!proposalIsTail) {
           // A rewrite replaces the whole draft.
           const done = typeof inputActions?.setDraft === 'function' && (inputActions.setDraft(proposal), true)
-          return done ? afterInsert(proposal) : false
+          return done ? afterInsert(proposal, 'setDraft') : false
         }
         const chunk = proposal
         // The tail was measured against the end of the draft. With the caret parked
@@ -2523,10 +2559,58 @@ const COVERED_DEBOUNCE_MS = 1200
         // with the whole suggestion instead.
         if (caretPlacement() === 'inside' && typeof inputActions?.setDraft === 'function') {
           const whole = `${live.draft}${chunk}`
-          return inputActions.setDraft(whole) !== false ? afterInsert(whole) : false
+          return inputActions.setDraft(whole) !== false ? afterInsert(whole, 'setDraft') : false
         }
-        return insert(chunk) ? afterInsert(latest.current.draft + chunk) : false
+        return insert(chunk) ? afterInsert(latest.current.draft + chunk, 'insert') : false
       }, [nextActive, composeActive, historyActive, historyMatch, proposal, proposalIsTail, current, inputActions, ghost, ghostLayer])
+
+        const [undoOffer, setUndoOffer] = React.useState(null)
+
+        // The offer is short-lived: eight seconds, or until the draft moves on.
+        React.useEffect(() => {
+          if (undoOffer === null) return undefined
+          if (undoOffer.sessionId !== sessionId) { setUndoOffer(null); return undefined }
+          if (draft !== undoOffer.after) { setUndoOffer(null); return undefined }
+          const timer = setTimeout(() => setUndoOffer(null), 8000)
+          return () => clearTimeout(timer)
+        }, [undoOffer, sessionId, draft])
+
+        /**
+         * Undo an accept. The native stack already holds the entry when the text went in
+         * through insertText; setDraft writes are not on it, so restore the draft instead.
+         */
+        const undo = React.useCallback(() => {
+          const offer = undoOffer
+          if (offer === null) return false
+          const finish = () => {
+            setUndoOffer(null)
+            lastRequested.current = null
+            ghost.clear(sessionId ?? undefined)
+            ghostLayer.clear()
+            editorEl()?.focus()
+            return true
+          }
+          if (offer.path === 'insert') {
+            try { document.execCommand('undo') } catch { /* older engines */ }
+            if (domDraft() === offer.before) return finish()
+          }
+          if (typeof inputActions?.setDraft === "function" && inputActions.setDraft(offer.before) !== false) return finish()
+          // Neither path worked: keep the offer so the user can try again.
+          return false
+        }, [undoOffer, sessionId, inputActions, ghost, ghostLayer])
+
+        /**
+         * Ask again for this draft. force=true skips the dedupe window and the "store
+         * already answered" gate: the user is explicitly overriding both. The retry
+         * budget is reset so the automatic retry is re-armed once per click.
+         */
+        const retry = React.useCallback(() => {
+          const live = latest.current
+          if (!live.enabled || live.sessionId === null || live.running === true) return false
+          retriedFor.current = null
+          request('compose', live.draft, true)
+          return true
+        }, [request])
 
       const acceptRef = React.useRef(accept)
       acceptRef.current = accept
@@ -2633,7 +2717,7 @@ const COVERED_DEBOUNCE_MS = 1200
             padding: '0 2px 4px',
             minHeight: '22px',
           },
-        }, renderStatusChip({ t, hintKey, statusText, failureText, position, running, chipStyle, pendingAny, onAccept: () => acceptRef.current(true) })),
+        }, renderStatusChip({ t, hintKey, statusText, failureText, position, running, chipStyle, pendingAny, onAccept: () => acceptRef.current(true), onUndo: () => undo(), onRetry: () => retry(), undoReady: undoOffer !== null })),
         h('span', {
           role: 'status',
           'aria-live': 'polite',
@@ -2811,6 +2895,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

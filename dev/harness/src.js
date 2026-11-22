@@ -98,6 +98,10 @@ const labels = {
   'hint.replace': '按 Tab 采用改写',
   'hint.pending': '补写中…',
   'hint.error': '建议失败',
+  'hint.accepted': '已采纳',
+  'hint.undo': '撤销',
+  'hint.retry': '重试',
+  'hint.retrying': '重试中…',
   'hint.history': '按 Tab 补全（历史）',
   'hint.position': '第 {index}/{total} 条，←/→ 切换',
   'status.prefix': '建议：',
@@ -159,7 +163,14 @@ async function main() {
         render(next)
         return true
       },
-        setDraft: (text) => { window.__harnessSetDraft = text; return true },
+        setDraft: (text) => {
+          window.__harnessSetDraft = text
+          // The host really replaces the draft; the harness must too, or a scenario that
+          // reads the draft back cannot tell whether the plugin worked.
+          editor.textContent = text
+          editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }))
+          return true
+        },
         captureInsertion: () => ({ draftRev: 0 }),
       },
       t,

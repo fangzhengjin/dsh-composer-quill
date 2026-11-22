@@ -2031,6 +2031,23 @@ group('client: gates')
 }
 
 
+group('client: chip')
+
+{
+  const api = globalThis.__ghostFactory.factory((name) => {
+    if (name === 'react') return fakeReact
+    throw new Error(`unexpected require(${name})`)
+  }).__test
+
+  check('the row shows one state, in a fixed order', () => {
+    assert.equal(api.statusChipKind({ pending: true, failure: 'x', undo: true, suggestion: 'y' }), 'pending')
+    assert.equal(api.statusChipKind({ pending: false, failure: 'x', undo: true, suggestion: 'y' }), 'error')
+    assert.equal(api.statusChipKind({ failure: '', undo: true, suggestion: 'y' }), 'undo')
+    assert.equal(api.statusChipKind({ failure: '', undo: false, suggestion: 'y' }), 'suggestion')
+    assert.equal(api.statusChipKind({ failure: '', undo: false, suggestion: '' }), 'hint')
+  })
+}
+
 const summary = [
   '',
   `${passed} passed`,
