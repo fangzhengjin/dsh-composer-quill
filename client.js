@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.41'
+    const BUILD = '0.31.42'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -2097,7 +2097,135 @@ const COVERED_DEBOUNCE_MS = 1200
         ghost.clear()
         ghostLayer.clear()
       }, [stopTimer, ghost, ghostLayer])
+  // Safety net: read the draft straight from the DOM on a slow interval. The dock can
+  // be remounted or skip a prop update while the host streams a turn.
+        React.useEffect(() => {
+          if (typeof window.setInterval !== 'function') return undefined
+          const interval = window.setInterval(() => {
+            const live = latest.current
+            if (!live.enabled || live.running || live.sessionId === null || live.manual) return
+            if (composing.current) return
+            const text = domDraft()
+            if (text.trim().length < MIN_DRAFT_CHARS) return
+            if (dockBooking.current.switched !== null) {
+              if (text === dockBooking.current.switched) return
+              sendDock({ type: 'switch-settled' })
+            }
+            if (text === lastRequested.current) return
+            if (dockBooking.current.dismissed === text) return
+            const pending = ghost.getSnapshot()
+            if (pending.phase !== 'idle' && pending.forDraft === text) return
+            // The draft still sits inside the proposal on screen: the draft effect has
+            // already scheduled a debounced request for it, so the safety net must not
+            // fire an immediate second one (S18 measured that as a wasted call).
+            if (pending.phase === 'ready' && pending.items.length > 0) {
+              const shown = pending.items[pending.index] ?? ''
+              if (shown.startsWith(text)) return
+            }
+            report('retrigger', { sessionId: live.sessionId, draftLength: text.length, detail: 'interval' })
+            // request() records the draft once a call actually starts: recording it
+            // here marked suppressed drafts as answered and stalled the ghost.
+            request('compose', text)
+          }, RETRIGGER_INTERVAL_MS)
+          return () => window.clearInterval(interval)
+        }, [ghost, request])
+
       return { request }
+    }
+
+    /** Typing drives the compose request: debounced on the settled draft. */
+    function useTypingRequest(passed) {
+      const {
+        draft, enabled, sessionId, running, settings, state, dockBooking, sendDock,
+        ghost, hydrateStored, report, request, composing, refs,
+      } = passed
+      const { lastRequested } = refs
+        React.useEffect(() => {
+          if (draft.trim() !== '') sendDock({ type: 'typed' })
+          if (!enabled || sessionId === null || running || settings.mode === 'manual') return
+          if (draft.trim().length < MIN_DRAFT_CHARS) {
+            if (state.kind === 'compose') ghost.clear(sessionId)
+            // Clearing the composer (after accepting, or by hand) must re-arm the
+            // next-message prediction instead of leaving the composer silent.
+            if (draft === '' && dockBooking.current.hadDraft) {
+              sendDock({ type: 'cleared' })
+              sendDock({ type: 'undismissed' })
+              lastRequested.current = null
+              // Drop the accepted proposal before asking for a fresh prediction.
+              ghost.clear(sessionId)
+              // This effect runs before the Session-switch effect, so on a switch the
+              // "draft became empty" case fires first: consult the store before
+              // spending a call, or switching Sessions re-samples everything.
+              if (!hydrateStored('next', '')) request('next', '', true)
+            }
+            return
+          }
+          if (dockBooking.current.dismissed === draft) return
+          // Right after an accept the draft is exactly what was just applied: it was
+          // already answered, so do not pay for another model call on it. Any other
+          // text is a new draft and must be requested.
+          if (lastRequested.current === draft) return
+          if (dockBooking.current.switched !== null) {
+            if (draft === dockBooking.current.switched) return
+            sendDock({ type: 'switch-settled' })
+          }
+          if (composing.current) return
+          // A response for an older draft is already useless: drop it now instead
+          // of letting it land after the new request starts.
+          // Cancelling is only right when the reply can no longer apply. A draft that
+          // merely grew (the usual case while typing) keeps the in-flight request
+          // alive: its tail still continues this text, and cancelling meant the user
+          // saw no suggestion at all until they stopped typing.
+          const inFlightFor = state.requested
+          const stillApplies = typeof inFlightFor === 'string' && inFlightFor !== '' && draft.startsWith(inFlightFor)
+          if (state.phase === 'loading' && inFlightFor !== null && inFlightFor !== draft && !stillApplies) ghost.cancel()
+            // Not claimed here: request() records the draft only when a call really
+            // starts. Marking a suppressed draft as answered stalled the ghost — the
+            // retrigger then skipped it forever.
+          // The draft still lies inside the proposal already on screen: keep using
+          // its tail and wait much longer before paying for a new call.
+          const stored = ghost.getSnapshot()
+          const storedText = stored.sessionId === sessionId && stored.kind === 'compose' && stored.items.length > 0
+            ? stored.items[stored.index] ?? ''
+            : ''
+          const covered = storedText !== ''
+            && stored.forDraft !== draft
+            && draft.replace(/\s+$/, '').startsWith(stored.forDraft.replace(/\s+$/, ''))
+            && followRemainder(storedText, draft.replace(/\s+$/, '')) !== ''
+          if (covered && dockBooking.current.covered !== draft) {
+            sendDock({ type: 'covered', draft })
+            report('covered', { sessionId, draftLength: draft.length, detail: 'prefix-extension' })
+          }
+          if (!covered) sendDock({ type: 'not-covered' })
+          // A stored answer for this exact draft is better than a fresh call.
+          if (hydrateStored('compose', draft)) return
+          request('compose', draft, false, covered ? COVERED_DEBOUNCE_MS : undefined)
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [draft, enabled, sessionId, running])
+    }
+
+    /** One diagnostic line at mount: which props arrived, and whether the Session exists. */
+    function useMountBeacon(passed) {
+      const { beaconSent, sessionId, session, report, running, draft, props, inputActions, input } = passed
+          if (beaconSent.current) return
+          beaconSent.current = true
+          if (sessionId === null) {
+            try { console.warn('[composer-quill] composer dock has no Session identity; keys =', Object.keys(session ?? {}).join(',')) } catch { /* no console */ }
+          }
+          report('dock', {
+            sessionId,
+            hasSession: session !== undefined && session !== null,
+            running,
+            draftLength: draft.length,
+            keys: Object.keys(session ?? {}).join(','),
+            detail: JSON.stringify({
+              ghost: props.ghost !== undefined,
+              config: props.config !== undefined,
+              inputActions: inputActions !== undefined && inputActions !== null,
+              input: input !== undefined && input !== null,
+            }),
+          })
+          // eslint-disable-next-line react-hooks/exhaustive-deps
     }
 
     function GhostDock(props) {
@@ -2155,27 +2283,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const ghostLayer = layer.current
       const { history, historyRef, bumpHistoryEpoch } = useComposerHistory(sessionId)
 
-      React.useEffect(() => {
-        if (beaconSent.current) return
-        beaconSent.current = true
-        if (sessionId === null) {
-          try { console.warn('[composer-quill] composer dock has no Session identity; keys =', Object.keys(session ?? {}).join(',')) } catch { /* no console */ }
-        }
-        report('dock', {
-          sessionId,
-          hasSession: session !== undefined && session !== null,
-          running,
-          draftLength: draft.length,
-          keys: Object.keys(session ?? {}).join(','),
-          detail: JSON.stringify({
-            ghost: props.ghost !== undefined,
-            config: props.config !== undefined,
-            inputActions: inputActions !== undefined && inputActions !== null,
-            input: input !== undefined && input !== null,
-          }),
-        })
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [])
+      useMountBeacon({ beaconSent, sessionId, session, report, running, draft, props, inputActions, input })
 
       const stopTimer = React.useCallback(() => {
         if (timer.current !== null) {
@@ -2284,104 +2392,16 @@ const COVERED_DEBOUNCE_MS = 1200
       }, [sessionId, running, enabled, draftEmpty, request, dismissAll])
 
       // Typing drives the compose request (debounced on the settled draft).
-      React.useEffect(() => {
-        if (draft.trim() !== '') sendDock({ type: 'typed' })
-        if (!enabled || sessionId === null || running || settings.mode === 'manual') return
-        if (draft.trim().length < MIN_DRAFT_CHARS) {
-          if (state.kind === 'compose') ghost.clear(sessionId)
-          // Clearing the composer (after accepting, or by hand) must re-arm the
-          // next-message prediction instead of leaving the composer silent.
-          if (draft === '' && dockBooking.current.hadDraft) {
-            sendDock({ type: 'cleared' })
-            sendDock({ type: 'undismissed' })
-            lastRequested.current = null
-            // Drop the accepted proposal before asking for a fresh prediction.
-            ghost.clear(sessionId)
-            // This effect runs before the Session-switch effect, so on a switch the
-            // "draft became empty" case fires first: consult the store before
-            // spending a call, or switching Sessions re-samples everything.
-            if (!hydrateStored('next', '')) request('next', '', true)
-          }
-          return
-        }
-        if (dockBooking.current.dismissed === draft) return
-        // Right after an accept the draft is exactly what was just applied: it was
-        // already answered, so do not pay for another model call on it. Any other
-        // text is a new draft and must be requested.
-        if (lastRequested.current === draft) return
-        if (dockBooking.current.switched !== null) {
-          if (draft === dockBooking.current.switched) return
-          sendDock({ type: 'switch-settled' })
-        }
-        if (composing.current) return
-        // A response for an older draft is already useless: drop it now instead
-        // of letting it land after the new request starts.
-        // Cancelling is only right when the reply can no longer apply. A draft that
-        // merely grew (the usual case while typing) keeps the in-flight request
-        // alive: its tail still continues this text, and cancelling meant the user
-        // saw no suggestion at all until they stopped typing.
-        const inFlightFor = state.requested
-        const stillApplies = typeof inFlightFor === 'string' && inFlightFor !== '' && draft.startsWith(inFlightFor)
-        if (state.phase === 'loading' && inFlightFor !== null && inFlightFor !== draft && !stillApplies) ghost.cancel()
-          // Not claimed here: request() records the draft only when a call really
-          // starts. Marking a suppressed draft as answered stalled the ghost — the
-          // retrigger then skipped it forever.
-        // The draft still lies inside the proposal already on screen: keep using
-        // its tail and wait much longer before paying for a new call.
-        const stored = ghost.getSnapshot()
-        const storedText = stored.sessionId === sessionId && stored.kind === 'compose' && stored.items.length > 0
-          ? stored.items[stored.index] ?? ''
-          : ''
-        const covered = storedText !== ''
-          && stored.forDraft !== draft
-          && draft.replace(/\s+$/, '').startsWith(stored.forDraft.replace(/\s+$/, ''))
-          && followRemainder(storedText, draft.replace(/\s+$/, '')) !== ''
-        if (covered && dockBooking.current.covered !== draft) {
-          sendDock({ type: 'covered', draft })
-          report('covered', { sessionId, draftLength: draft.length, detail: 'prefix-extension' })
-        }
-        if (!covered) sendDock({ type: 'not-covered' })
-        // A stored answer for this exact draft is better than a fresh call.
-        if (hydrateStored('compose', draft)) return
-        request('compose', draft, false, covered ? COVERED_DEBOUNCE_MS : undefined)
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [draft, enabled, sessionId, running])
+      useTypingRequest({
+        draft, enabled, sessionId, running, settings, state, dockBooking, sendDock,
+        ghost, hydrateStored, report, request, composing, refs: { lastRequested },
+      })
 
       /**
        * Safety net: read the draft straight from the composer DOM on a slow
        * interval. The dock can be remounted or skip a prop update while the host
        * streams a turn, and a suggestion feature must not depend on that.
        */
-      React.useEffect(() => {
-        if (typeof window.setInterval !== 'function') return undefined
-        const interval = window.setInterval(() => {
-          const live = latest.current
-          if (!live.enabled || live.running || live.sessionId === null || live.manual) return
-          if (composing.current) return
-          const text = domDraft()
-          if (text.trim().length < MIN_DRAFT_CHARS) return
-          if (dockBooking.current.switched !== null) {
-            if (text === dockBooking.current.switched) return
-            sendDock({ type: 'switch-settled' })
-          }
-          if (text === lastRequested.current) return
-          if (dockBooking.current.dismissed === text) return
-          const pending = ghost.getSnapshot()
-          if (pending.phase !== 'idle' && pending.forDraft === text) return
-          // The draft still sits inside the proposal on screen: the draft effect has
-          // already scheduled a debounced request for it, so the safety net must not
-          // fire an immediate second one (S18 measured that as a wasted call).
-          if (pending.phase === 'ready' && pending.items.length > 0) {
-            const shown = pending.items[pending.index] ?? ''
-            if (shown.startsWith(text)) return
-          }
-          report('retrigger', { sessionId: live.sessionId, draftLength: text.length, detail: 'interval' })
-          // request() records the draft once a call actually starts: recording it
-          // here marked suppressed drafts as answered and stalled the ghost.
-          request('compose', text)
-        }, RETRIGGER_INTERVAL_MS)
-        return () => window.clearInterval(interval)
-      }, [ghost, request])
 
       /**
        * One retry per draft after a failed request. A dropped model call should
