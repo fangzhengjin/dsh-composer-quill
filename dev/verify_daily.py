@@ -41,9 +41,16 @@ CHROME = _chrome_path()
 results: list[tuple[str, bool, str]] = []
 
 
+class _ScenarioLimit(Exception):
+    """Raised once the requested number of scenarios has run."""
+
+
 def record(name: str, ok: bool, evidence: str) -> None:
     results.append((name, ok, evidence))
     print(f"{'PASS' if ok else 'FAIL'}  {name}  {evidence}")
+    limit = int(os.environ.get("DSH_SCENARIO_LIMIT", "0") or 0)
+    if limit > 0 and len(results) >= limit:
+        raise _ScenarioLimit()
 
 
 def longest_run(samples, pred):
@@ -853,7 +860,12 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except _ScenarioLimit:
+        passed = sum(1 for _, ok, _ in results if ok)
+        print(f"\n已跑 {len(results)} 条（DSH_SCENARIO_LIMIT），{passed} 通过")
+        sys.exit(0)
 
 
 

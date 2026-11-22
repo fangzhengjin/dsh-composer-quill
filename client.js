@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.42'
+    const BUILD = '0.31.43'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -2133,6 +2133,82 @@ const COVERED_DEBOUNCE_MS = 1200
       return { request }
     }
 
+    /** Turn boundaries and Session switches. */
+    function useSessionBoundary(passed) {
+      const {
+        sessionId, running, enabled, draftEmpty, settings, request, dismissAll, latest,
+        ghost, ghostLayer, sendDock, hydrateStored, bumpHistoryEpoch, refs,
+      } = passed
+      const { previous, composing, hydratedFor, lastRequested, lastCall, retriedFor, notLive, learnedShown } = refs
+        React.useEffect(() => {
+          const prior = previous.current
+          previous.current = { sessionId, running }
+          if (prior === null) {
+            if (hydrateStored('next', '')) return
+            if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual') request('next', '', true)
+            return
+          }
+          if (prior.sessionId !== sessionId) {
+            composing.current = false
+            sendDock({ type: 'undismissed' })
+            hydratedFor.current = ''
+            // Claims belong to the previous Session: with them in place the first
+            // draft here would be skipped as "already requested".
+            lastRequested.current = null
+            lastCall.current = { key: '', at: 0 }
+            // A fresh Session gets a fresh retry budget: a backoff from the previous
+            // Session must not silence this one.
+            retriedFor.current = null
+            notLive.current = { until: 0, attempts: 0, timer: notLive.current.timer }
+            sendDock({ type: 'cleared' })
+            // The composer still carries the previous Session's draft until the
+            // host swaps it: never ask for a proposal on someone else's text.
+            sendDock({ type: 'switch-started', draft: latest.current.draft })
+            // Hydrate first, while the store is untouched: coming back to a Session
+            // whose conversation has not moved is not a new question, and asking the
+            // model again would show "补写中…" for something already known.
+            if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual'
+              && hydrateStored('next', '')) {
+              ghostLayer.clear()
+              return
+            }
+            dismissAll()
+            if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual') {
+              // Nothing stored: this Session genuinely has no answer yet.
+              const shown = ghost.getSnapshot()
+              const alreadyShown = shown.sessionId === sessionId && shown.items.length > 0
+              if (!alreadyShown) request('next', '', true)
+            }
+            return
+          }
+          if (prior.running && !running) {
+            bumpEpoch(sessionId)
+            // A finished turn adds messages this Session's history did not have.
+            bumpHistoryEpoch()
+            // New turn, new transcript: stored suggestions for it are stale.
+            clearSessionSuggestions(sessionId)
+            // A retry that was armed for a failed draft is obsolete now.
+            retriedFor.current = null
+            if (enabled && draftEmpty && settings.mode !== 'manual') {
+              if (!hydrateStored('next', '')) request('next', '', true)
+            }
+          }
+          if (running) {
+            const shown = learnedShown.current
+            if (shown !== null && shown.consumed !== true && Date.now() - shown.at < 120_000) {
+              shown.consumed = true
+              recordOutcome(shown.features, false)
+            }
+            // A turn started: stop any in-flight request and hide the ghost, but
+            // keep the proposal. The row is hidden by `running` anyway, and keeping
+            // it means a suggestion is already on screen the instant the turn ends
+            // instead of after another model round trip.
+            ghost.cancel()
+            ghostLayer.clear()
+          }
+        }, [sessionId, running, enabled, draftEmpty, request, dismissAll])
+    }
+
     /** Typing drives the compose request: debounced on the settled draft. */
     function useTypingRequest(passed) {
       const {
@@ -2323,73 +2399,11 @@ const COVERED_DEBOUNCE_MS = 1200
       })
 
       // Turn boundary and Session switch drive the next-message prediction.
-      React.useEffect(() => {
-        const prior = previous.current
-        previous.current = { sessionId, running }
-        if (prior === null) {
-          if (hydrateStored('next', '')) return
-          if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual') request('next', '', true)
-          return
-        }
-        if (prior.sessionId !== sessionId) {
-          composing.current = false
-          sendDock({ type: 'undismissed' })
-          hydratedFor.current = ''
-          // Claims belong to the previous Session: with them in place the first
-          // draft here would be skipped as "already requested".
-          lastRequested.current = null
-          lastCall.current = { key: '', at: 0 }
-          // A fresh Session gets a fresh retry budget: a backoff from the previous
-          // Session must not silence this one.
-          retriedFor.current = null
-          notLive.current = { until: 0, attempts: 0, timer: notLive.current.timer }
-          sendDock({ type: 'cleared' })
-          // The composer still carries the previous Session's draft until the
-          // host swaps it: never ask for a proposal on someone else's text.
-          sendDock({ type: 'switch-started', draft: latest.current.draft })
-          // Hydrate first, while the store is untouched: coming back to a Session
-          // whose conversation has not moved is not a new question, and asking the
-          // model again would show "补写中…" for something already known.
-          if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual'
-            && hydrateStored('next', '')) {
-            ghostLayer.clear()
-            return
-          }
-          dismissAll()
-          if (!running && sessionId !== null && enabled && draftEmpty && settings.mode !== 'manual') {
-            // Nothing stored: this Session genuinely has no answer yet.
-            const shown = ghost.getSnapshot()
-            const alreadyShown = shown.sessionId === sessionId && shown.items.length > 0
-            if (!alreadyShown) request('next', '', true)
-          }
-          return
-        }
-        if (prior.running && !running) {
-          bumpEpoch(sessionId)
-          // A finished turn adds messages this Session's history did not have.
-          bumpHistoryEpoch()
-          // New turn, new transcript: stored suggestions for it are stale.
-          clearSessionSuggestions(sessionId)
-          // A retry that was armed for a failed draft is obsolete now.
-          retriedFor.current = null
-          if (enabled && draftEmpty && settings.mode !== 'manual') {
-            if (!hydrateStored('next', '')) request('next', '', true)
-          }
-        }
-        if (running) {
-          const shown = learnedShown.current
-          if (shown !== null && shown.consumed !== true && Date.now() - shown.at < 120_000) {
-            shown.consumed = true
-            recordOutcome(shown.features, false)
-          }
-          // A turn started: stop any in-flight request and hide the ghost, but
-          // keep the proposal. The row is hidden by `running` anyway, and keeping
-          // it means a suggestion is already on screen the instant the turn ends
-          // instead of after another model round trip.
-          ghost.cancel()
-          ghostLayer.clear()
-        }
-      }, [sessionId, running, enabled, draftEmpty, request, dismissAll])
+      useSessionBoundary({
+        sessionId, running, enabled, draftEmpty, settings, request, dismissAll, latest,
+        ghost, ghostLayer, sendDock, hydrateStored, bumpHistoryEpoch,
+        refs: { previous, composing, hydratedFor, lastRequested, lastCall, retriedFor, notLive, learnedShown },
+      })
 
       // Typing drives the compose request (debounced on the settled draft).
       useTypingRequest({
