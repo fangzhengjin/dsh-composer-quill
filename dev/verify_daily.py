@@ -998,42 +998,41 @@ def main() -> int:
             f"compose {before_calls}->{after_calls}->{resumed}（关掉时 0 增长，打开后恢复）",
         )
 
-        # ---- S44 Alt+Tab 不采纳（焦点是否移动交给宿主，这里只断言「没采纳」）
+        h("type('')")
+
+        # ---- S44 Ctrl+Tab / Shift+Tab 不采纳（Alt+Tab 是 Windows 的切窗口键，到不了页面）
         page.reload()
         page.wait_for_function("() => window.__harnessReady === true", timeout=30000)
         page.wait_for_timeout(300)
         reset("")
         h("setComposeMode('ok')")
         page.focus('[data-composer-input]')
-        page.evaluate(
-            """() => {
-                window.__keys = [];
-                window.addEventListener('keydown', (event) => {
-                    window.__keys.push({ key: event.key, alt: event.altKey, trusted: event.isTrusted });
-                }, true);
-            }"""
-        )
         h("typeLive('这段日志', {delay: 30})")
-        chip_before = None
+        chip = None
         for _ in range(12):
             page.wait_for_timeout(300)
-            chip_before = page.evaluate(
+            chip = page.evaluate(
                 """() => { const n = document.querySelector('[data-composer-quill="dock-suggestion"]'); return n ? n.textContent.slice(0, 16) : null }"""
             )
-            if chip_before:
+            if chip:
                 break
-        before_alt = h("draft()")
-        page.evaluate("() => { window.__harnessInserted = null; window.__harnessSetDraft = null }")
-        page.keyboard.press("Alt+Tab")
-        page.wait_for_timeout(300)
-        after_alt = h("draft()")
-        seen = page.evaluate("() => window.__keys || []")
-        applied = page.evaluate("() => ({ inserted: window.__harnessInserted, setDraft: window.__harnessSetDraft })")
+        before_key = h("draft()")
+        seen = {}
+        for key in ("Control+Tab", "Shift+Tab"):
+            page.evaluate("() => { window.__harnessInserted = null; window.__harnessSetDraft = null }")
+            page.keyboard.press(key)
+            page.wait_for_timeout(250)
+            applied = page.evaluate("() => ({ i: window.__harnessInserted, s: window.__harnessSetDraft })")
+            seen[key] = (h("draft()"), applied)
         record(
-            "S44 Alt+Tab 不采纳",
-            bool(chip_before) and after_alt == before_alt and applied["inserted"] is None and applied["setDraft"] is None,
-            f"草稿 {before_alt!r}→{after_alt!r} applied={applied} 收到的按键={seen[-2:]}",
+            "S44 Ctrl+Tab / Shift+Tab 不采纳",
+            bool(chip) and all(
+                draft == before_key and pair["i"] is None and pair["s"] is None
+                for draft, pair in seen.values()
+            ),
+            "草稿 " + repr(before_key) + " 未变: " + " / ".join(k + "=" + repr(v[0]) for k, v in seen.items()),
         )
+
         h("type('')")
 
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
