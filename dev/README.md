@@ -20,7 +20,7 @@ npm install                      # 首次：react / react-dom / esbuild
 node node_modules/esbuild/bin/esbuild src.js --bundle --format=iife --target=chrome120 --outfile=bundle.js
 
 cd ..
-python verify_daily.py           # 48 个场景，全绿即通过
+python verify_daily.py           # 47 个场景，全绿即通过
 ```
 
 模拟器页面通过 `file://` 打开，`src.js` 里 `await import('../../client.js')` 直接引用**插件源码**，所以改完 `client.js` 必须重新构建 bundle，否则跑的是旧代码（这是本仓库最容易踩的坑）。
@@ -38,7 +38,7 @@ python verify_emptyline.py  "http://127.0.0.1:PORT/?token=…"
 
 | 脚本 | 验证点 |
 | --- | --- |
-| `verify_daily.py` | 48 个行为场景（模拟器，不需要实例） |
+| `verify_daily.py` | 47 个行为场景（模拟器，不需要实例） |
 | `verify_harness.py` | 模拟器自身的冒烟检查 |
 | `verify_fresh_start.py` | 刚启动时状态行可用、不卡「补写中」 |
 | `verify_emptyline.py` | 空行（`<br>` 之后）灰字锚点 |

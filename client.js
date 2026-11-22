@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.47'
+    const BUILD = '0.31.48'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -95,7 +95,6 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.learning': '采纳反馈',
       'settings.learningEmpty': '还没有样本（Tab 采纳 / Esc 忽略都会计入）',
       'settings.manualHint': '手动触发：Ctrl+Shift+Space',
-      'settings.keyboard': '键盘：Tab 采纳；Ctrl+Tab 或 Shift+Tab 不采纳，把焦点交还宿主',
     }
     const en = {
       'hint.accept': 'Press Tab to accept',
@@ -133,7 +132,6 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.learning': 'Acceptance feedback',
       'settings.learningEmpty': 'no samples yet (Tab accepts, Esc dismisses)',
       'settings.manualHint': 'Trigger manually: Ctrl+Shift+Space',
-      'settings.keyboard': 'Keyboard: Tab accepts; Ctrl+Tab or Shift+Tab keeps the suggestion and moves focus',
     }
 
     function token() {
@@ -2934,7 +2932,6 @@ const COVERED_DEBOUNCE_MS = 1200
           h('span', { style: hintStyle }, 'ms'))),
 
         section(t('settings.section.keys')),
-        h('div', { style: hintStyle }, t('settings.keyboard')),
         h('div', { style: hintStyle }, t('settings.manualHint')),
 
         section(t('settings.section.learning')),
