@@ -378,6 +378,18 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     /**
+     * True while a request for this exact draft is already scheduled but has not gone
+     * out. The typing path schedules on a short delay; the safety net polls on a slow
+     * one; without this the two can both fire for the same draft.
+     */
+    function claimBlocksRetrigger(claim, text, now) {
+      if (claim === null || typeof claim !== 'object') return false
+      if (typeof claim.key !== 'string' || typeof claim.until !== 'number') return false
+      if (now >= claim.until) return false
+      return claim.key === `compose|${text}`
+    }
+
+    /**
      * Which state the one-line row shows. Pure, so the precedence is testable: a
      * failure outranks an undo offer, which outranks a suggestion.
      */
@@ -2044,12 +2056,19 @@ const COVERED_DEBOUNCE_MS = 1200
           .finally(() => clearTimeout(deadline))
       }, [ghost])   // only refs and stable helpers are touched: a first-render capture is safe
   
+      /** The draft a scheduled request is about to ask for, and until when. */
+      const claim = React.useRef({ key: '', until: 0 })
+
       const request = React.useCallback((mode, forDraft, force = false, delayOverride = null) => {
         stopTimer()
-        if (mode === 'next') {
-        }
+        // Claim the draft now, not when the call actually starts: the safety net polls
+        // on its own clock and must see the pending request even before it fires.
+        const claimDraft = mode === 'next' ? '' : (forDraft || latest.current.draft)
+        const claimDelay = delayOverride ?? (mode === 'next' ? NEXT_DEBOUNCE_MS : latest.current.debounceMs)
+        claim.current = { key: `${mode}|${claimDraft}`, until: Date.now() + claimDelay + 400 }
         timer.current = setTimeout(() => {
           timer.current = null
+          claim.current = { key: '', until: 0 }
           const live = latest.current
           // One snapshot, read once: the gates below share it, exactly as the
           // hand-written chain did (two reads could disagree mid-flight).
@@ -2152,6 +2171,12 @@ const COVERED_DEBOUNCE_MS = 1200
             if (dockBooking.current.switched !== null) {
               if (text === dockBooking.current.switched) return
               sendDock({ type: 'switch-settled' })
+            }
+            // A debounced request for this draft is already scheduled: that is a fact,
+            // not a heuristic, so the poll must not queue a second one.
+            if (claimBlocksRetrigger(claim.current, text, Date.now())) {
+              report('retrigger-skipped', { sessionId: live.sessionId, draftLength: text.length, detail: 'claim' })
+              return
             }
             if (text === lastRequested.current) return
             if (dockBooking.current.dismissed === text) return
@@ -2915,6 +2940,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })

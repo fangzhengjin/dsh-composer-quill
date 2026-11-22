@@ -2049,6 +2049,32 @@ group('client: chip')
   })
 }
 
+group('client: claim')
+
+{
+  const api = globalThis.__ghostFactory.factory((name) => {
+    if (name === 'react') return fakeReact
+    throw new Error(`unexpected require(${name})`)
+  }).__test
+
+  check('a scheduled compose blocks the safety net for its own draft only', () => {
+    const claim = { key: 'compose|这段日志', until: 10_000 }
+    assert.equal(api.claimBlocksRetrigger(claim, '这段日志', 9_000), true)
+    assert.equal(api.claimBlocksRetrigger(claim, '别的草稿', 9_000), false)
+    assert.equal(api.claimBlocksRetrigger(claim, '这段日志', 10_000), false)
+  })
+
+  check('no claim, or a malformed one, blocks nothing', () => {
+    for (const claim of [null, undefined, {}, { key: 'compose|x' }, 'text', 42]) {
+      assert.equal(api.claimBlocksRetrigger(claim, '这段日志', 1_000), false, String(claim))
+    }
+  })
+
+  check('only a compose claim can block the poll', () => {
+    assert.equal(api.claimBlocksRetrigger({ key: 'next|', until: 10_000 }, '', 9_000), false)
+  })
+}
+
 const summary = [
   '',
   `${passed} passed`,
