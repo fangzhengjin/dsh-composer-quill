@@ -1531,7 +1531,11 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
     // Two or three characters: finish it or stay silent.
     // The short-draft prompt is a second call. Skip it for drafts too small to carry
     // meaning: the answer would be a guess, and guesses are what we are trying to cut.
-    if (Array.from(String(cleanDraft ?? '')).length >= 4 && await composeShortDraft(ctx, session, events, { cleanDraft, locale, forced, key, send, signal })) return
+    // Every draft goes through the short-draft prompt first. It used to require
+    // four characters, which pushed one- and two-character drafts into the heavy
+    // compose and then into a second call to recover: the priciest path for the
+    // least input.
+    if (await composeShortDraft(ctx, session, events, { cleanDraft, locale, forced, key, send, signal })) return
     const context = transcriptOf(events, { rows: 10, chars: 3200, focus: cleanDraft }) || '[]'
     let head = ''
     let acc = ''
