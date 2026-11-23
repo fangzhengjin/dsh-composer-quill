@@ -2222,6 +2222,18 @@ group('host: usage')
     assert.equal(formatCost(1350, 7), '¥0.0095')
   })
 
+group('host: budget')
+
+{
+  const { maxTokensFor } = host.__test
+
+  check('the output cap follows the mode and the draft size', () => {
+    assert.equal(maxTokensFor('next', 0), 96)
+    assert.equal(maxTokensFor('compose', 20), 256)
+    assert.equal(maxTokensFor('compose', 900), 512, 'a long draft may be rewritten wholesale')
+  })
+}
+
 const summary = [
   '',
   `${passed} passed`,

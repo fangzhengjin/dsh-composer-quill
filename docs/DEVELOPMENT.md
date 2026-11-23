@@ -158,6 +158,18 @@ python dev/verify_with_retry.py --attempts 3 --threshold 2
 设置卡片注册在 `settings.section`（不是 `settings.general.item`）：它是设置导航里独立的一节，
 自带 `id` / `order` / `label`。夹具里 `showSettings()` 按这个名字找组件。
 
+### 上下文预算与回滚
+
+默认按「紧」预算跑：transcript 1800 字符、单条消息 800 字符、最多 6 行。
+
+要回到旧行为（9000 / 2200 / 14），启动 DSH 前设一个环境变量：
+
+```bash
+DSH_QUILL_CONTEXT=full
+```
+
+这是这次省 token 改动的回滚开关——不需要改代码、不需要重新发布。代价只是长对话里能带的上文变少。
+
 ### 二分场景套件
 
 只跑到第 N 条就停，用来定位「从某条开始才失败」的问题：

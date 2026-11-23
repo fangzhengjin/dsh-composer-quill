@@ -32,9 +32,13 @@ const TOKEN_HEADER = 'x-composer-quill-token'
 const CLIENT_HEADER = 'x-composer-quill-client'
 
 const MAX_CANDIDATES = 3
-const MAX_TRANSCRIPT_CHARS = 9000
-const MAX_MESSAGE_CHARS = 2200
-const MAX_ROWS = 14
+// Context budget. "tight" is the default: the old numbers were sized for a
+// 9000-token transcript nobody measured. DSH_QUILL_CONTEXT=full restores them
+// without a rebuild, which is the rollback switch for the whole change.
+const TIGHT_CONTEXT = String(process.env.DSH_QUILL_CONTEXT ?? 'tight').toLowerCase() !== 'full'
+const MAX_TRANSCRIPT_CHARS = TIGHT_CONTEXT ? 1800 : 9000
+const MAX_MESSAGE_CHARS = TIGHT_CONTEXT ? 800 : 2200
+const MAX_ROWS = TIGHT_CONTEXT ? 6 : 14
 /**
  * How far back a relevance-scored row may be pulled into the window. Scored over
  * the whole session, one shared keyword was enough to drag an hour-old topic back
@@ -59,7 +63,19 @@ const MAX_NORMALIZED_CHARS = 8000
  * bounds the answer (three candidates, one short message), so this is headroom for
  * thinking, not permission for longer suggestions.
  */
-const MAX_TOKENS = 1200
+// Output budget per call. A next-message candidate is a short sentence; a rewrite of
+// a long draft is the only case that needs room. Sending 1200 for every call made the
+// model free to write far more than any screen shows.
+const MAX_TOKENS = 512
+const MAX_TOKENS_BY_MODE = Object.freeze({ next: 96, compose: 256, sentence: 256, rewrite: 512 })
+
+/** The cap for this call: a long draft may be rewritten wholesale, so it gets room. */
+function maxTokensFor(mode, draftChars) {
+  if (mode === 'next') return MAX_TOKENS_BY_MODE.next
+  const length = Number(draftChars) || 0
+  if (length >= 240) return MAX_TOKENS_BY_MODE.rewrite
+  return MAX_TOKENS_BY_MODE.compose
+}
 // A cache key already contains the Session, the transcript version, the model, the
 // language and the browser's turn counter: if all of that is unchanged the answer is
 // still the answer, and re-sampling it costs money for nothing. Two minutes covers the
@@ -1507,7 +1523,9 @@ async function composeShortDraft(ctx, session, events, options) {
 async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal }) {
   try {
     // Two or three characters: finish it or stay silent.
-    if (await composeShortDraft(ctx, session, events, { cleanDraft, locale, forced, key, send, signal })) return
+    // The short-draft prompt is a second call. Skip it for drafts too small to carry
+    // meaning: the answer would be a guess, and guesses are what we are trying to cut.
+    if (Array.from(String(cleanDraft ?? '')).length >= 4 && await composeShortDraft(ctx, session, events, { cleanDraft, locale, forced, key, send, signal })) return
     const context = transcriptOf(events, { rows: 10, chars: 3200, focus: cleanDraft }) || '[]'
     let head = ''
     let acc = ''
@@ -1747,7 +1765,10 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
     }
     // One suggestion gives the user nothing to choose from. Ask once more for a
     // fuller set (cheap: only happens when the first answer was thin).
-    if (candidates.length === 1) {
+    // One short candidate is worth a second ask; one that already reads like a full
+    // sentence is not — the retry would double the bill for a marginal gain.
+    const onlyCandidate = candidates.length === 1 ? String(candidates[0] ?? '') : ''
+    if (candidates.length === 1 && Array.from(onlyCandidate).length < 12) {
       try {
         const again = await ask(
           ctx,
@@ -2202,7 +2223,7 @@ export function apply(ctx) {
 }
 
 /** Pure helpers exposed for the offline smoke test. */
-export const __test = { handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
+export const __test = { maxTokensFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
 
 
 
