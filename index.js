@@ -67,7 +67,10 @@ const MAX_NORMALIZED_CHARS = 8000
 // a long draft is the only case that needs room. Sending 1200 for every call made the
 // model free to write far more than any screen shows.
 const MAX_TOKENS = 512
-const MAX_TOKENS_BY_MODE = Object.freeze({ next: 96, compose: 256, sentence: 256, rewrite: 512 })
+// Measured output (usage-call): next 166–254 tokens, compose up to 377. A cap below
+// that truncates the JSON and the suggestion silently disappears, so these sit above
+// the observed peak while still stopping a runaway answer.
+const MAX_TOKENS_BY_MODE = Object.freeze({ next: 384, compose: 384, sentence: 384, rewrite: 768 })
 
 /** The cap for this call. The caller says which kind of answer it expects. */
 function maxTokensFor(mode) {
@@ -1317,6 +1320,11 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
     signal.removeEventListener('abort', onAbort)
     try { await iterator.return?.() } catch { /* already closed */ }
   }
+  // An empty reply used to look like "the model had nothing to say". Usually it means
+  // the budget ran out before the first token, so record the cap alongside it.
+  if (typeof text === 'string' && text.trim() === '' && finish?.kind !== 'error') {
+    trace('empty-reply', { mode, maxTokens: maxTokensFor(mode), finish: finish?.kind ?? null })
+  }
   if (finish?.kind === 'error') {
     noteUsage({ mode, model: route?.model, usage: null, at: startedAt })
     throw new Error(finish.failure?.message ?? 'model call failed')
@@ -1528,14 +1536,14 @@ async function composeShortDraft(ctx, session, events, options) {
 
 async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, session, send, locale, forced, signal }) {
   try {
-    // Two or three characters: finish it or stay silent.
-    // The short-draft prompt is a second call. Skip it for drafts too small to carry
-    // meaning: the answer would be a guess, and guesses are what we are trying to cut.
-    // Every draft goes through the short-draft prompt first. It used to require
-    // four characters, which pushed one- and two-character drafts into the heavy
-    // compose and then into a second call to recover: the priciest path for the
-    // least input.
-    if (await composeShortDraft(ctx, session, events, { cleanDraft, locale, forced, key, send, signal })) return
+    // Two or three characters can only take a guess: the short-draft prompt gives one
+    // or stays silent. Anything longer goes to the main compose, which can rewrite as
+    // well as append — routing it to the short prompt made suggestions disappear.
+    const draftLength = Array.from(String(cleanDraft ?? '')).length
+    if (draftLength < MIN_TAIL_DRAFT_CHARS) {
+      await composeShortDraft(ctx, session, events, { cleanDraft, locale, forced, key, send, signal })
+      return
+    }
     const context = transcriptOf(events, { rows: 10, chars: 3200, focus: cleanDraft }) || '[]'
     let head = ''
     let acc = ''

@@ -2228,10 +2228,10 @@ group('host: budget')
   const { maxTokensFor } = host.__test
 
   check('the output cap follows the shape of the answer', () => {
-    assert.equal(maxTokensFor('next'), 96)
-    assert.equal(maxTokensFor('compose'), 256)
-    assert.equal(maxTokensFor('rewrite'), 512, 'a long draft may be rewritten wholesale')
-    assert.equal(maxTokensFor('unknown-mode'), 256, 'an unknown shape falls back to the safe one')
+    assert.equal(maxTokensFor('next'), 384)
+    assert.equal(maxTokensFor('compose'), 384)
+    assert.equal(maxTokensFor('rewrite'), 768, 'a long draft may be rewritten wholesale')
+    assert.equal(maxTokensFor('unknown-mode'), 384, 'an unknown shape falls back to the safe one')
   })
 }
 

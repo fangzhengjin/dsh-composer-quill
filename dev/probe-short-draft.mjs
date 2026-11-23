@@ -52,8 +52,10 @@ const run = async (label, replies, draft, events = longEvents) => {
     forced: '',
     signal: new AbortController().signal,
   })
+  const final = sent.find((s) => s.event === 'final')
+  const done = sent.filter((s) => s.event === 'done').map((s) => s.data?.reason ?? s.data?.mode ?? 'ok').join(',')
   console.log(`${label.padEnd(22)} 草稿${String(Array.from(draft).length).padStart(2)}字  calls=${calls.length}  ` +
-    `caps=${calls.map((c) => c.maxTokens).join('+')}  promptChars=${calls.map((c) => c.promptChars).join('+')}`)
+    `promptChars=${calls.map((c) => c.promptChars).join('+')}  建议=${final ? JSON.stringify(final.data.text).slice(0, 26) : '无'}  done=${done || '—'}`)
 }
 
 console.log('长对话（15 轮）下的调用形态：')
@@ -62,3 +64,8 @@ await run('3 字草稿', ['SKIP', '接着说这个'], '帮忙看')
 await run('4 字草稿', ['，顺便说下是哪个接口'], '帮忙看下')
 await run('10 字草稿', ['，顺便说下是哪个接口'], '帮我看下这个报错')
 await run('2 字草稿（模型给尾巴）', ['，先看下日志'], '帮忙')
+console.log('')
+console.log('主补写路径（≥4 字）的三种回答：')
+await run('10 字 · 给尾巴', ['，顺便说下是哪个接口'], '帮我看下这个报错')
+await run('10 字 · 给改写', ['REWRITE: 帮我看下这个报错，顺便说下是哪个接口。'], '帮我看下这个报错')
+await run('10 字 · SKIP', ['SKIP', '先确认下是哪个接口超时'], '帮我看下这个报错')
