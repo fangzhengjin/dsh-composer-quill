@@ -32,13 +32,21 @@ const TOKEN_HEADER = 'x-composer-quill-token'
 const CLIENT_HEADER = 'x-composer-quill-client'
 
 const MAX_CANDIDATES = 3
-// Context budget. "tight" is the default: the old numbers were sized for a
-// 9000-token transcript nobody measured. DSH_QUILL_CONTEXT=full restores them
-// without a rebuild, which is the rollback switch for the whole change.
+// Context budget: one group, every call site reads from here. "tight" is the
+// default — the old numbers were sized for a 9000-character transcript nobody
+// measured. DSH_QUILL_CONTEXT=full restores them without a rebuild, which is the
+// rollback switch for the whole change.
 const TIGHT_CONTEXT = String(process.env.DSH_QUILL_CONTEXT ?? 'tight').toLowerCase() !== 'full'
-const MAX_TRANSCRIPT_CHARS = TIGHT_CONTEXT ? 1800 : 9000
-const MAX_MESSAGE_CHARS = TIGHT_CONTEXT ? 800 : 2200
-const MAX_ROWS = TIGHT_CONTEXT ? 6 : 14
+const CONTEXT_BUDGET = Object.freeze({
+  short: { rows: TIGHT_CONTEXT ? 6 : 8, chars: TIGHT_CONTEXT ? 1200 : 2400 },
+  main: { rows: TIGHT_CONTEXT ? 8 : 10, chars: TIGHT_CONTEXT ? 1600 : 3200 },
+  next: { rows: TIGHT_CONTEXT ? 8 : 10, chars: TIGHT_CONTEXT ? 1600 : 3200 },
+  message: TIGHT_CONTEXT ? 800 : 2200,
+  fallback: TIGHT_CONTEXT ? 1800 : 9000,
+})
+const MAX_TRANSCRIPT_CHARS = CONTEXT_BUDGET.fallback
+const MAX_MESSAGE_CHARS = CONTEXT_BUDGET.message
+const MAX_ROWS = CONTEXT_BUDGET.main.rows
 /**
  * How far back a relevance-scored row may be pulled into the window. Scored over
  * the whole session, one shared keyword was enough to drag an hour-old topic back
@@ -1504,7 +1512,7 @@ const composeInFlight = new Map()
  */
 async function composeShortDraft(ctx, session, events, options) {
   const { cleanDraft, context, locale, forced, key, send, signal } = options
-      const shortContext = transcriptOf(events, { rows: 8, chars: 2400, focus: cleanDraft }) || '[]'
+      const shortContext = transcriptOf(events, { ...CONTEXT_BUDGET.short, focus: cleanDraft }) || '[]'
       const shortPrompt = buildShortDraftPrompt({
         draft: cleanDraft,
         context: shortContext,
@@ -1544,7 +1552,7 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
       await composeShortDraft(ctx, session, events, { cleanDraft, locale, forced, key, send, signal })
       return
     }
-    const context = transcriptOf(events, { rows: 10, chars: 3200, focus: cleanDraft }) || '[]'
+    const context = transcriptOf(events, { ...CONTEXT_BUDGET.main, focus: cleanDraft }) || '[]'
     let head = ''
     let acc = ''
     let decided = false
@@ -1754,7 +1762,7 @@ async function computeShortPrediction(ctx, session, events, options) {
 }
 
 async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDraft, key, locale, forced, signal }) {
-  const context = hasTurns ? transcriptOf(events, { rows: 10, chars: 3200, focus: cleanDraft }) : '[]'
+  const context = hasTurns ? transcriptOf(events, { ...CONTEXT_BUDGET.next, focus: cleanDraft }) : '[]'
   if (kind === 'next') {
     const profile = styleProfile(events)
     const assistant = lastAssistantText(events)

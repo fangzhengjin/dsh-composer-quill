@@ -1,3 +1,21 @@
+## 探针
+
+三个小工具，用来在**不连真机**的情况下看清行为。它们不是测试，不会进 CI。
+
+| 文件 | 看什么 |
+| --- | --- |
+| `probe-compose-calls.mjs` | 用脚本化的 `ctx.llm` 驱动真实的 `produceCompose`：一次补写发几次调用、每次的输出上限、提示词多大 |
+| `probe-short-draft.mjs` | 同上，但带一段 15 轮的长对话，覆盖 2/3/4/10 字草稿与尾巴/改写/SKIP 三种回答 |
+| `probe_client_requests.py` | 在夹具里数一次打字停顿到底发几次请求（不是宿主内部重发） |
+| `probe_retrigger.py` | 三条重发路径：建议出现后再打字、模型说无改动后静置、首次失败后的自动重试 |
+
+```bash
+node dev/probe-short-draft.mjs
+python dev/probe_client_requests.py
+```
+
+用处：上一轮「建议消失」就是 `probe-short-draft.mjs` 里 2 字草稿走错路径暴露出来的。
+
 # dev/ — 开发与验证工具
 
 这个目录**不随插件发布**（`package.json` 的 `files` 未包含它），只用于本地开发与验证。

@@ -81,7 +81,7 @@ npm run test:log -- 1             # 汇总最近 1 小时的诊断日志
 
 ### 3.1 单测（`npm test`）
 
-不依赖 DSH，直接用假的 `ctx` / 假 `res` 驱动真实代码。124 条用例分十七组：
+不依赖 DSH，直接用假的 `ctx` / 假 `res` 驱动真实代码。125 条用例分十七组：
 
 - **host: pure helpers** — 解析器、`transcriptOf`、`sessionDigest`、语言闸、输入清洗、缓存开关
 - **host: routes and streaming** — 鉴权矩阵、SSE 帧时序、缓存命中、单飞、日志轮转
