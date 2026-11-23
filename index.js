@@ -69,12 +69,9 @@ const MAX_NORMALIZED_CHARS = 8000
 const MAX_TOKENS = 512
 const MAX_TOKENS_BY_MODE = Object.freeze({ next: 96, compose: 256, sentence: 256, rewrite: 512 })
 
-/** The cap for this call: a long draft may be rewritten wholesale, so it gets room. */
-function maxTokensFor(mode, draftChars) {
-  if (mode === 'next') return MAX_TOKENS_BY_MODE.next
-  const length = Number(draftChars) || 0
-  if (length >= 240) return MAX_TOKENS_BY_MODE.rewrite
-  return MAX_TOKENS_BY_MODE.compose
+/** The cap for this call. The caller says which kind of answer it expects. */
+function maxTokensFor(mode) {
+  return MAX_TOKENS_BY_MODE[mode] ?? MAX_TOKENS_BY_MODE.compose
 }
 // A cache key already contains the Session, the transcript version, the model, the
 // language and the browser's turn counter: if all of that is unchanged the answer is
@@ -741,6 +738,9 @@ function parseComposeReply(reply, draft, options = {}) {
   }
   // With a very short draft the model can only guess; a fragment like "我。" is
   // worse than nothing, so only a full rewrite is acceptable there.
+  // "SKIP" is the model saying it has nothing to add. Treated as a tail it used
+  // to be appended verbatim, so a draft could end up reading "... SKIP".
+  if (/^(skip|noop|none|unchanged|不需要|无需修改)\.?$/i.test(text)) return null
   if (!allowTail) return null
   // A model that answers with {"text": …} is handing over a full message, not a
   // tail. Unwrap it; anything else that still starts like JSON is a parse failure
@@ -1270,7 +1270,7 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
     provider: route.provider,
     model: route.model,
     system,
-    maxTokens: MAX_TOKENS,
+    maxTokens: maxTokensFor(mode),
     messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
     sessionId: session?.id ?? session?.sessionId,
     signal,
@@ -1560,6 +1560,7 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
     const digest = sessionDigest(events)
     const settingLanguage = resolveLanguage({ locale, forced })
     const prompt = composePrompt({ draft: cleanDraft, context, digest, style, assistant, settingLanguage })
+    const mainMode = Array.from(cleanDraft).length >= 240 ? 'rewrite' : 'compose'
     const first = await ask(ctx, session, events, COMPOSE_RULES, prompt, signal, (delta) => {
       if (!firstDeltaLogged) {
         firstDeltaLogged = true
@@ -1576,7 +1577,7 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
       // model sometimes emits "\n" before "REWRITE:".
       const lead = head.replace(/^\s+/, '')
       if (/^rewrite\s*:/i.test(lead) || lead.length >= 12) decide(head)
-    })
+    }, mainMode)
     if (!decided) decide(head)
     const replyRaw = first.text
     const parsed = parseComposeReply(replyRaw, cleanDraft, {
@@ -2223,7 +2224,7 @@ export function apply(ctx) {
 }
 
 /** Pure helpers exposed for the offline smoke test. */
-export const __test = { maxTokensFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
+export const __test = { produceCompose, maxTokensFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
 
 
 
