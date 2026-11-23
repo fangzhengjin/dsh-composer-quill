@@ -238,6 +238,11 @@ function looksLikeMeta(text) {
   return META_PATTERNS.some((pattern) => pattern.test(value))
 }
 
+/** The model saying "nothing to add". Never a suggestion, never a tail. */
+function isSentinel(text) {
+  return /^(skip|noop|none|unchanged|不需要|无需修改)\.?$/i.test(String(text ?? '').trim())
+}
+
 /** Replace credential shapes with a marker so they never reach the model. */
 function maskSecrets(text) {
   if (typeof text !== 'string' || text === '') return ''
@@ -807,6 +812,7 @@ function parseComposed(reply, draft) {
 /** Read the appendable sentence out of the fallback reply. */
 function parseSentence(reply) {
   if (typeof reply !== 'string') return null
+  if (isSentinel(reply)) return null
   const fenced = reply.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()
   const start = fenced.indexOf('{')
   const end = fenced.lastIndexOf('}')
@@ -1535,6 +1541,9 @@ async function produceCompose(ctx, { sessionId, draft: cleanDraft, key, events, 
     let firstDeltaLogged = false
     const emit = (text) => { if (text !== '') send('delta', { text }) }
     const decide = (raw) => {
+      // A sentinel that arrived in the stream must not be painted as a tail: the
+      // parser rejects it afterwards, but by then the user has seen the word.
+      if (isSentinel(raw)) { send('retract', { mode: 'append' }); return }
       if (decided) return
       decided = true
       // Leading whitespace must not hide the marker: the model sometimes starts

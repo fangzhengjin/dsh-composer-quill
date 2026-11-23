@@ -75,3 +75,6 @@ total += await run('超长草稿（>240 字）', ['REWRITE: 整理过的版本']
 total += await run('三个字草稿', ['SKIP', '接着说'], '帮忙看')
 console.log('')
 console.log('合计调用', total)
+console.log('')
+console.log('说明：每次 run() 只发一次 produceCompose，调用数 >1 才是宿主内部重发；')
+console.log('      为 1 说明日志里成对的调用来自客户端的第二次请求。')
