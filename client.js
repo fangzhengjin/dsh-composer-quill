@@ -51,7 +51,7 @@ const COVERED_DEBOUNCE_MS = 1200
      * first delta (measured median ~1.9 s): firing sooner only cancels the request
      * that was about to paint the ghost. At 700 ms a third of all requests died.
      */
-    const RETRIGGER_INTERVAL_MS = 1500
+    const RETRIGGER_INTERVAL_MS = 3000
     const MIN_DRAFT_CHARS = 1
     const CLIENT_TIMEOUT_MS = 20000
     /** A stored answer older than this is not worth reusing. */

@@ -5,14 +5,14 @@
 `client.js` 里目前有五个地方会调 `request()`，各自的守卫散落在 effect 里，靠注释和实测记忆维持一致。本文件列的是**现状 + 已定的三条决定**，改结构时以它为准，行为改变也要先改它。
 
 > 适用版本：0.31.50
-> 相关常量：`COMPOSE_DEBOUNCE_MS = 120`、`COVERED_DEBOUNCE_MS = 1200`、`RETRIGGER_INTERVAL_MS = 1500`、`CLIENT_TIMEOUT_MS = 20000`、`MIN_DRAFT_CHARS = 1`
+> 相关常量：`COMPOSE_DEBOUNCE_MS = 120`、`COVERED_DEBOUNCE_MS = 1200`、`RETRIGGER_INTERVAL_MS = 3000`、`CLIENT_TIMEOUT_MS = 20000`、`MIN_DRAFT_CHARS = 1`
 
 ## 五个发起方
 
 | # | 发起方 | 触发时机 | 调用的形态 | 自身前置条件（代码实际写的） | 节流/延迟 |
 |---|---|---|---|---|---|
 | 1 | **打字防抖** | 草稿变化，或会话切换后草稿为空 | `request('compose', draft, false, covered ? 1200 : undefined)` / `request('next', '', true)` | `enabled`、`sessionId !== null`、`!running`、`mode !== 'manual'`、`draft.trim().length >= 1`、`dismissedDraft !== draft`；先试 `hydrateStored()`，命中即不发 | `debounceMs`（默认 120）；草稿仍在旧建议里时 1200 |
-| 2 | **安全网** | 每 1500ms 轮询一次 | `request('compose', text)`（`force` 为 false） | 同上之外再加：`!composing`、`switchDraft` 已结算、`text !== lastRequested`、`dismissedDraft !== text`、store 未对本草稿处于非 idle、屏幕上建议不以本草稿为前缀 | 1500ms 轮询 |
+| 2 | **安全网** | 每 3000ms 轮询一次 | `request('compose', text)`（`force` 为 false） | 同上之外再加：`!composing`、`switchDraft` 已结算、`text !== lastRequested`、`dismissedDraft !== text`、store 未对本草稿处于非 idle、屏幕上建议不以本草稿为前缀 | 3000ms 轮询 |
 | 3 | **失败重试** | store 进入 `phase==='error' && kind==='compose'` | `request('compose', draft)` | 额外：`state.forDraft === draft`、`retriedFor !== draft`；**每份草稿一次** | 1200ms 后发 |
 | 4 | **会话切换 / 回合结束** | `running` 由真变假 | `request('next', '', true)` | `enabled`、`draftEmpty`、`mode !== 'manual'`；先 `hydrateStored('next','')` | 立即（`force` 跳过 900ms 去重） |
 | 5 | **手动触发** | `Ctrl/Cmd+Shift+Space` | `request('compose', live.draft)` | `enabled`、`sessionId !== null`、`draft.trim().length >= 1`（**不看 `mode`**） | 立即，并先写 `lastRequested` |
@@ -59,4 +59,4 @@
 ## 尚未定的事
 
 - `empty` 之后又采一次并失败，屏幕上从「没东西可补」跳成「建议失败」：按 ② 这是对的，但两次结论之间的转换没有任何过渡，用户可能没注意到
-- 安全网 1500ms 与打字防抖 120ms 没有共同时间基准，靠 `lastRequested` 与「前缀覆盖」两条软判据合作，没有硬互斥锁
+- 安全网 3000ms 与打字防抖 120ms 没有共同时间基准，靠 `lastRequested` 与「前缀覆盖」两条软判据合作，没有硬互斥锁

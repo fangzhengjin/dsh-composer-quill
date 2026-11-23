@@ -1304,6 +1304,17 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
     throw cancelled()
   }
   noteUsage({ mode, model: route?.model, usage, at: startedAt })
+  // One line per call: the ledger sums, this says whether the model spent anything
+  // on reasoning. Reasoning tokens are billed as output, which is the expensive side.
+  trace('usage-call', {
+    mode,
+    model: route?.model ?? null,
+    input: Number(usage?.inputTokens) || 0,
+    output: Number(usage?.outputTokens) || 0,
+    cacheRead: Number(usage?.cacheReadTokens) || 0,
+    reasoning: Number(usage?.reasoningTokens) || 0,
+    peak: isPeak(startedAt),
+  })
   return { text, route, usage }
 }
 

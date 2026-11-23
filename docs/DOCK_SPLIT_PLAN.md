@@ -29,7 +29,7 @@ return h(React.Fragment, null,
 | 请求机器 | 1673–1906 | `requestRef`、`notLive`、`lastCall`、`servedFromStore`、`composeStream`、`nextJson`、`request` |
 | 回合边界 | 1907–1975 | effect（`[sessionId, running, enabled, draftEmpty, request, dismissAll]`） |
 | 打字防抖 | 1976–2043 | effect（`[draft, enabled, sessionId, running]`） |
-| 安全网 | 2044–2078 | effect（`[ghost, request]`），1500ms 轮询 |
+| 安全网 | 2044–2078 | effect（`[ghost, request]`），3000ms 轮询 |
 | 重试 | 2079–2098 | effect（`[state.phase, state.kind, state.forDraft, draft, …]`） |
 | 卸载清理 | 2099–2160 | effect（`[stopTimer, ghost, ghostLayer]`） |
 | 采纳 | 2161–2234 | `accept`、`acceptRef`、`paintData` |
