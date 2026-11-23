@@ -18,6 +18,20 @@ window.fetch = async (url, init) => {
     else init.signal.addEventListener('abort', () => { window.__harnessAborts += 1 }, { once: true })
   }
   calls.push({ url: String(url), mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : String(url).includes('history') ? 'history' : 'next'), draft: body.draft ?? '', event: body.event ?? '', detail: body.detail ?? '', sessionId: body.sessionId ?? '' })
+  if (String(url).includes('/composer-quill/usage')) {
+    const zero = { calls: 0, void: 0, input: 0, output: 0, cacheRead: 0, costMicro: 0, uncosted: 0 }
+    const snapshot = {
+      lifetime: { ...zero, calls: 147, input: 118000, output: 7000, costMicro: 42000 },
+      today: { ...zero, calls: 12, input: 9600, output: 600, costMicro: 3400 },
+      session: { ...zero, calls: 3, input: 2400, output: 150, costMicro: 900 },
+      byMode: {},
+      byModel: {},
+      retentionDays: 30,
+      price: { asOf: '2026-11-23', currency: 'USD' },
+    }
+    if (body.reset === true) return { ok: true, status: 200, json: async () => ({ ok: true, ...snapshot, lifetime: zero, today: zero, session: zero }) }
+    return { ok: true, status: 200, json: async () => snapshot }
+  }
   if (String(url).includes('/composer-quill/history')) {
     return {
       ok: true,

@@ -1001,6 +1001,40 @@ def main() -> int:
         h("type('')")
 
 
+        # ---- S45 消耗面板：有数字，点重置后归零
+        page.reload()
+        page.wait_for_function("() => window.__harnessReady === true", timeout=30000)
+        page.wait_for_timeout(300)
+        h("showSettings()")
+        page.wait_for_timeout(600)
+        panel = page.evaluate(
+            """() => {
+                const node = document.querySelector('[data-composer-quill="usage-panel"]');
+                return node ? node.textContent : null;
+            }"""
+        )
+        record(
+            "S45 消耗面板显示用量",
+            panel is not None
+            and "147" in panel
+            and "12 次" in panel
+            and ("累计" in panel or "usage.lifetime" in panel),
+            f"面板={ (panel or '')[:80]!r }",
+        )
+
+        page.evaluate(
+            """() => { const b = document.querySelector('[data-composer-quill="usage-reset"]'); if (b) b.click() }"""
+        )
+        page.wait_for_timeout(600)
+        after = page.evaluate(
+            """() => { const node = document.querySelector('[data-composer-quill="usage-panel"]'); return node ? node.textContent : null }"""
+        )
+        record(
+            "S45 重置后归零",
+            after is not None and "147" not in after and "0 次" in after,
+            f"重置后={(after or '')[:80]!r}",
+        )
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()

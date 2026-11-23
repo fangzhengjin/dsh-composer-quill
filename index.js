@@ -16,7 +16,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { readFileSync, renameSync, statSync } from 'node:fs'
-import { appendFile, rename as renameAsync, writeFile as writeFileAsync } from 'node:fs/promises'
+import { appendFile, readFile as readFileAsync, rename as renameAsync, writeFile as writeFileAsync } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -26,6 +26,7 @@ export const inject = ['llm', 'agents']
 const ROUTE_PATH = '/composer-quill/predict'
 const HISTORY_PATH = '/composer-quill/history'
 const BEACON_PATH = '/composer-quill/beacon'
+const USAGE_PATH = '/composer-quill/usage'
 const TOKEN_GLOBAL = '__DSH_COMPOSER_QUILL_TOKEN__'
 const TOKEN_HEADER = 'x-composer-quill-token'
 const CLIENT_HEADER = 'x-composer-quill-client'
@@ -1036,11 +1037,219 @@ function remember(key, value, ttl) {
 const inflight = new Map()
 
 /** Run one auxiliary model call and return its raw text; optional delta tap. */
-async function ask(ctx, session, events, system, prompt, signal, onDelta) {
+// ---------------------------------------------------------------------- usage ledger
+// What the model actually charged us, per call. The stream carries a `usage` chunk
+// ({ inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens })
+// that this plugin used to drop on the floor, so nothing was ever measured.
+const USAGE_RETENTION_DAYS = 30
+const USAGE_VERSION = 1
+
+/** USD per 1M tokens. Peak/off-peak pairs; isPeak() below decides which applies. */
+const PRICE_TABLE = Object.freeze({
+  asOf: '2026-11-23',
+  // The provider quotes USD; the panel shows CNY. Kept beside the table so the rate
+  // ages with it instead of silently following whatever the day's number is.
+  currency: 'USD',
+  cnyPerUsd: 7.1,
+  models: {
+    'deepseek-flash': { hit: [0.003, 0.006], miss: [0.15, 0.3], output: [0.6, 1.2] },
+    'deepseek-v4-pro': { hit: [0.022, 0.044], miss: [0.66, 1.32], output: [1.98, 3.96] },
+    'deepseek-chat': { hit: [0.003, 0.006], miss: [0.15, 0.3], output: [0.6, 1.2] },
+    'deepseek-reasoner': { hit: [0.003, 0.006], miss: [0.15, 0.3], output: [0.6, 1.2] },
+    'deepseek-v4-flash': { hit: [0.003, 0.006], miss: [0.15, 0.3], output: [0.6, 1.2] },
+  },
+})
+
+/**
+ * Peak is 01:00–04:00 and 06:00–10:00 UTC, Monday through Friday.
+ *
+ * TODO(holidays): the provider also treats Chinese public holidays as off-peak. Until
+ * a holiday table ships, calls on those days are priced at the weekday rate, which is
+ * the higher of the two.
+ */
+function isPeak(at) {
+  const date = at instanceof Date ? at : new Date(at ?? Date.now())
+  const day = date.getUTCDay()
+  if (day === 0 || day === 6) return false
+  const hour = date.getUTCHours() + date.getUTCMinutes() / 60
+  return (hour >= 1 && hour < 4) || (hour >= 6 && hour < 10)
+}
+
+/** Cost of one call in USD, or null when the model has no price here. */
+function estimateCost({ model, usage, at } = {}) {
+  const price = PRICE_TABLE.models[String(model ?? '')]
+  if (price === undefined || usage === null || typeof usage !== 'object') return null
+  const peak = isPeak(at) ? 1 : 0
+  const input = Number(usage.inputTokens) || 0
+  const cacheRead = Number(usage.cacheReadTokens) || 0
+  const output = Number(usage.outputTokens) || 0
+  const fresh = Math.max(0, input - cacheRead)
+  return (fresh * price.miss[peak] + cacheRead * price.hit[peak] + output * price.output[peak]) / 1_000_000
+}
+
+function emptyUsage() {
+  // costMicro is integer micro-USD: money is booked when the call happens, so a later
+  // price change never rewrites old totals. uncosted counts calls whose model has no
+  // price here — the panel says so instead of silently showing zero.
+  return { calls: 0, void: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, costMicro: 0, uncosted: 0 }
+}
+
+function emptyLedger() {
+  return { version: USAGE_VERSION, lifetime: emptyUsage(), byMode: {}, byModel: {}, days: {} }
+}
+
+const usageLedger = { file: null, data: emptyLedger(), session: new Map(), dirty: false }
+
+function usageLedgerPath() {
+  if (usageLedger.file !== null) return usageLedger.file
+  // Same directory as the log and the cache: the profile, never the checkout.
+  const dir = process.env.DSH_PROFILE_DIR ?? process.env.DSH_HOME ?? homedir() ?? tmpdir()
+  usageLedger.file = join(dir, 'composer-quill-usage.json')
+  return usageLedger.file
+}
+
+/** Add one call to a bucket. `usage` null means the call produced no numbers. */
+function addToBucket(bucket, usage, costMicro = 0) {
+  bucket.calls += 1
+  if (costMicro === null) bucket.uncosted = (bucket.uncosted ?? 0) + 1
+  else bucket.costMicro = (bucket.costMicro ?? 0) + Math.round(costMicro)
+  if (usage === null || typeof usage !== 'object') {
+    bucket.void += 1
+    return
+  }
+  bucket.input += Number(usage.inputTokens) || 0
+  bucket.output += Number(usage.outputTokens) || 0
+  bucket.cacheRead += Number(usage.cacheReadTokens) || 0
+  bucket.cacheWrite += Number(usage.cacheWriteTokens) || 0
+  bucket.reasoning += Number(usage.reasoningTokens) || 0
+}
+
+function dayKey(at) {
+  const date = at instanceof Date ? at : new Date(at ?? Date.now())
+  return date.toISOString().slice(0, 10)
+}
+
+/** Keep the last USAGE_RETENTION_DAYS days. lifetime is never trimmed. */
+function pruneDays(data, at) {
+  const days = data.days ?? {}
+  const cutoff = new Date(at ?? Date.now())
+  cutoff.setUTCDate(cutoff.getUTCDate() - USAGE_RETENTION_DAYS)
+  const limit = dayKey(cutoff)
+  for (const key of Object.keys(days)) if (key < limit) delete days[key]
+}
+
+/** Record one call. Never throws: a broken ledger must not break a suggestion. */
+function noteUsage({ mode, model, usage, sessionId, at } = {}) {
+  try {
+    const data = usageLedger.data
+    // at is the moment the request started, not the moment it finished: the provider
+    // bills by when the call happened, and a call can cross the peak boundary.
+    const when = at ?? Date.now()
+    const key = mode === 'next' ? 'next' : 'compose'
+    // A call that returned no usage is counted as void, not as "we had no price for
+    // it": sending null here would increment both counters for the same call.
+    const usd = usage === null || typeof usage !== 'object' ? 0 : estimateCost({ model, usage, at: when })
+    const costMicro = usd === null ? null : usd * 1_000_000
+    addToBucket(data.lifetime, usage, costMicro)
+    data.byMode[key] = data.byMode[key] ?? emptyUsage()
+    addToBucket(data.byMode[key], usage, costMicro)
+    const name = String(model ?? 'unknown')
+    data.byModel[name] = data.byModel[name] ?? emptyUsage()
+    addToBucket(data.byModel[name], usage, costMicro)
+    const day = dayKey(when)
+    data.days[day] = data.days[day] ?? emptyUsage()
+    addToBucket(data.days[day], usage, costMicro)
+    pruneDays(data, when)
+    if (typeof sessionId === 'string' && sessionId !== '') {
+      const entry = usageLedger.session.get(sessionId) ?? emptyUsage()
+      addToBucket(entry, usage)
+      usageLedger.session.set(sessionId, entry)
+    }
+    usageLedger.dirty = true
+    scheduleUsageFlush()
+    return true
+  } catch {
+    return false
+  }
+}
+
+let usageFlushTimer = null
+/** Coalesce writes: a burst of calls should not mean a burst of fsyncs. */
+function scheduleUsageFlush() {
+  if (usageFlushTimer !== null) return
+  usageFlushTimer = setTimeout(() => {
+    usageFlushTimer = null
+    flushUsage().catch(() => {})
+  }, 2000)
+  if (typeof usageFlushTimer?.unref === 'function') usageFlushTimer.unref()
+}
+
+/** Flush with temp + rename, so a kill cannot leave half a JSON behind. */
+async function flushUsage() {
+  if (usageLedger.dirty !== true) return false
+  usageLedger.dirty = false
+  const target = usageLedgerPath()
+  const temp = `${target}.${process.pid}.tmp`
+  try {
+    await writeFileAsync(temp, `${JSON.stringify(usageLedger.data, null, 2)}\n`)
+    await renameAsync(temp, target)
+    return true
+  } catch {
+    usageLedger.dirty = true
+    return false
+  }
+}
+
+async function loadUsage() {
+  const target = usageLedgerPath()
+  try {
+    const text = await readFileAsync(target, 'utf8')
+    const parsed = JSON.parse(text)
+    if (parsed === null || typeof parsed !== 'object' || parsed.version !== USAGE_VERSION) throw new Error('shape')
+    usageLedger.data = {
+      version: USAGE_VERSION,
+      lifetime: { ...emptyUsage(), ...(parsed.lifetime ?? {}) },
+      byMode: parsed.byMode ?? {},
+      byModel: parsed.byModel ?? {},
+      days: parsed.days ?? {},
+    }
+  } catch (error) {
+    usageLedger.data = emptyLedger()
+    if (error?.code !== 'ENOENT') trace('usage-store-reset', { detail: String(error?.message ?? error).slice(0, 120) })
+  }
+  return usageLedger.data
+}
+
+function usageSnapshot({ sessionId } = {}) {
+  const today = usageLedger.data.days[dayKey(Date.now())] ?? emptyUsage()
+  const session = typeof sessionId === 'string' ? usageLedger.session.get(sessionId) ?? emptyUsage() : emptyUsage()
+  return {
+    lifetime: { ...usageLedger.data.lifetime },
+    byMode: usageLedger.data.byMode,
+    byModel: usageLedger.data.byModel,
+    today: { ...today },
+    session: { ...session },
+    retentionDays: USAGE_RETENTION_DAYS,
+    price: { asOf: PRICE_TABLE.asOf, currency: PRICE_TABLE.currency, cnyPerUsd: PRICE_TABLE.cnyPerUsd },
+  }
+}
+
+function resetUsage() {
+  usageLedger.data = emptyLedger()
+  usageLedger.session.clear()
+  usageLedger.dirty = true
+  return true
+}
+
+async function ask(ctx, session, events, system, prompt, signal, onDelta, mode = 'compose') {
   const route = routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx)
   if (route === undefined) throw httpError('No model route is available for this Session', 409)
   let text = ''
   let finish
+  let usage = null
+  // Billing depends on when the call happened (peak/off-peak), so take the stamp
+  // before the stream is created, not when the last chunk arrives.
+  const startedAt = Date.now()
   const stream = ctx.llm.stream({
     provider: route.provider,
     model: route.model,
@@ -1078,16 +1287,24 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta) {
       } else if (chunk?.type === 'block-end' && chunk.block?.type === 'text' && text === '') {
         text = typeof chunk.block.text === 'string' ? chunk.block.text : ''
         if (text !== '' && typeof onDelta === 'function') onDelta(text)
-      } else if (chunk?.type === 'finish') finish = chunk.reason
+      } else if (chunk?.type === 'usage') usage = chunk.usage ?? null
+      else if (chunk?.type === 'finish') finish = chunk.reason
       if (text.length > MAX_NORMALIZED_CHARS + 2000) break
     }
   } finally {
     signal.removeEventListener('abort', onAbort)
     try { await iterator.return?.() } catch { /* already closed */ }
   }
-  if (finish?.kind === 'error') throw new Error(finish.failure?.message ?? 'model call failed')
-  if (finish?.kind === 'aborted') throw cancelled()
-  return { text, route }
+  if (finish?.kind === 'error') {
+    noteUsage({ mode, model: route?.model, usage: null, at: startedAt })
+    throw new Error(finish.failure?.message ?? 'model call failed')
+  }
+  if (finish?.kind === 'aborted') {
+    noteUsage({ mode, model: route?.model, usage: null, at: startedAt })
+    throw cancelled()
+  }
+  noteUsage({ mode, model: route?.model, usage, at: startedAt })
+  return { text, route, usage }
 }
 
 /** Server-sent-event frame writer for one response. */
@@ -1500,7 +1717,7 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
       'Write as the USER, not as the assistant: never continue or paraphrase the assistant reply, and never switch language because it uses another one.',
       'Return the JSON object of candidate next user messages.',
     ].filter(Boolean).join('\n\n')
-    const { text, route } = await ask(ctx, session, events, NEXT_RULES, prompt, signal)
+    const { text, route } = await ask(ctx, session, events, NEXT_RULES, prompt, signal, undefined, 'next')
     const lastUser = [...events].reverse().find((event) => event?.type === 'user/message')
     const lastUserText = textOfBlocks(lastUser?.data?.content ?? lastUser?.data?.message?.content)
     let candidates = rankCandidates(parseCandidates(text), { profile, lastAssistant: assistant, lastUser: lastUserText, locale, forced })
@@ -1528,6 +1745,8 @@ async function computePrediction(ctx, { session, events, hasTurns, kind, cleanDr
           NEXT_RULES,
           `${prompt}\n\nThe previous answer had a single candidate. Return exactly 3 distinct candidates this time.`,
           signal,
+          undefined,
+          'next',
         )
         const more = rankCandidates(parseCandidates(again.text), { profile, lastAssistant: assistant, lastUser: lastUserText, locale, forced })
         const merged = [...candidates]
@@ -1779,6 +1998,41 @@ function historyOf(events, limit = 200) {
   return out.slice(-limit)
 }
 
+/** Serve `/composer-quill/usage`: the ledger, and reset on request. */
+async function handleUsage(token, req, res) {
+  trace('usage-route', { method: String(req.method ?? 'GET').toUpperCase() })
+  if (!preflight(req, res, token, { tokenOnly: true, label: 'usage' })) return
+  try {
+    const method = String(req.method ?? 'GET').toUpperCase()
+    let body = null
+    if (method === 'POST') {
+      // readJson needs an abort signal to tear down its listeners; without one it threw
+      // "Cannot read properties of undefined (reading 'aborted')" on the first POST.
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(httpError('usage read timed out', 504)), REQUEST_TIMEOUT_MS)
+      timeout.unref?.()
+      const onClose = () => { if (!res.writableEnded) controller.abort(cancelled()) }
+      res.on('close', onClose)
+      try {
+        body = await readJson(req, controller.signal)
+      } finally {
+        clearTimeout(timeout)
+        res.off('close', onClose)
+      }
+      if (body?.reset === true) {
+        resetUsage()
+        await flushUsage()
+        respond(res, 200, { ok: true, ...usageSnapshot({}) })
+        return
+      }
+    }
+    const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+    respond(res, 200, usageSnapshot({ sessionId }))
+  } catch (error) {
+    respond(res, 500, { error: { code: 'usage-failed', message: String(error?.message ?? error).slice(0, 200) } })
+  }
+}
+
 /** Serve `POST /composer-quill/history`: the user's own past messages, no model. */
 async function handleHistory(ctx, token, req, res) {
   // Session history is the user's own text: no header-only shortcut here.
@@ -1869,11 +2123,23 @@ export function apply(ctx) {
   // Suggestions from the previous run are still valid: reuse them instead of
   // paying for the same model call again after a restart.
   trace('cache-restored', { entries: loadCache() })
+  // The usage ledger is a running total, so it has to come back after a restart.
+  loadUsage()
+    .then((data) => trace('usage-restored', { entries: data.lifetime?.calls ?? 0 }))
+    .catch(() => {})
   // A pending debounced write must not outlive the plugin.
   if (typeof ctx.effect === 'function') {
-    ctx.effect(() => () => { if (saveTimer !== null) { clearTimeout(saveTimer); saveTimer = null } })
+    ctx.effect(() => () => {
+      if (saveTimer !== null) { clearTimeout(saveTimer); saveTimer = null }
+      if (usageFlushTimer !== null) { clearTimeout(usageFlushTimer); usageFlushTimer = null }
+      flushUsage().catch(() => {})
+    })
   } else if (typeof ctx.on === 'function') {
-    ctx.on('dispose', () => { if (saveTimer !== null) { clearTimeout(saveTimer); saveTimer = null } })
+    ctx.on('dispose', () => {
+    if (saveTimer !== null) { clearTimeout(saveTimer); saveTimer = null }
+    if (usageFlushTimer !== null) { clearTimeout(usageFlushTimer); usageFlushTimer = null }
+    flushUsage().catch(() => {})
+  })
   }
 
   // Self-check: does the client-modules service know a browser bundle for this
@@ -1913,6 +2179,11 @@ export function apply(ctx) {
       path: HISTORY_PATH,
       handler: (req, res) => handleHistory(ctx, token, req, res),
     }), 'composer-quill: history route')
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: USAGE_PATH,
+      handler: (req, res) => handleUsage(token, req, res),
+    }), 'composer-quill: usage route')
     scope.on('webserver/index-inject', (table) => {
       table.push({ kind: 'global', name: TOKEN_GLOBAL, value: token })
     })
@@ -1920,7 +2191,7 @@ export function apply(ctx) {
 }
 
 /** Pure helpers exposed for the offline smoke test. */
-export const __test = { cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
+export const __test = { handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
 
 
 

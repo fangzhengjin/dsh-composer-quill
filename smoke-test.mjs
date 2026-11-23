@@ -2100,6 +2100,128 @@ group('client: keys')
   })
 }
 
+group('host: usage')
+
+{
+  const { noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak } = host.__test
+
+  check('a call lands in lifetime, mode, model and the day bucket', () => {
+    resetUsage()
+    noteUsage({ mode: 'compose', model: 'deepseek-flash', usage: { inputTokens: 1000, outputTokens: 50, cacheReadTokens: 400 }, sessionId: 's-usage' })
+    noteUsage({ mode: 'next', model: 'deepseek-flash', usage: { inputTokens: 500, outputTokens: 20 }, sessionId: 's-usage' })
+    const snap = usageSnapshot({ sessionId: 's-usage' })
+    assert.equal(snap.lifetime.calls, 2)
+    assert.equal(snap.lifetime.input, 1500)
+    assert.equal(snap.lifetime.output, 70)
+    assert.equal(snap.lifetime.cacheRead, 400)
+    assert.equal(snap.byMode.compose.calls, 1)
+    assert.equal(snap.byMode.next.calls, 1)
+    assert.equal(snap.byModel['deepseek-flash'].calls, 2)
+    assert.equal(snap.session.calls, 2)
+    assert.equal(snap.today.calls, 2)
+  })
+
+  check('a call without usage counts as void and moves no tokens', () => {
+    resetUsage()
+    noteUsage({ mode: 'compose', model: 'deepseek-flash', usage: null })
+    const snap = usageSnapshot({})
+    assert.equal(snap.lifetime.calls, 1)
+    assert.equal(snap.lifetime.void, 1)
+    assert.equal(snap.lifetime.input, 0)
+  })
+
+  check('days older than the retention window are dropped, lifetime is not', () => {
+    resetUsage()
+    const old = Date.now() - 40 * 24 * 3600 * 1000
+    noteUsage({ mode: 'compose', model: 'deepseek-flash', usage: { inputTokens: 10 }, at: old })
+    noteUsage({ mode: 'compose', model: 'deepseek-flash', usage: { inputTokens: 20 } })
+    const snap = usageSnapshot({})
+    assert.equal(snap.lifetime.input, 30)
+    assert.equal(Object.keys(snap.days ?? {}).length <= 1, true)
+  })
+
+  check('peak hours are 01-04 and 06-10 UTC on weekdays', () => {
+    const monday = (h) => new Date(Date.UTC(2026, 10, 23, h, 30))
+    assert.equal(isPeak(monday(2)), true)
+    assert.equal(isPeak(monday(7)), true)
+    assert.equal(isPeak(monday(5)), false)
+    assert.equal(isPeak(monday(11)), false)
+    const sunday = new Date(Date.UTC(2026, 10, 22, 2, 30))
+    assert.equal(isPeak(sunday), false)
+  })
+
+  check('cost uses the cache-hit rate for cached input', () => {
+    const offPeak = new Date(Date.UTC(2026, 10, 22, 12, 0))
+    const cost = estimateCost({
+      model: 'deepseek-flash',
+      usage: { inputTokens: 1_000_000, cacheReadTokens: 900_000, outputTokens: 0 },
+      at: offPeak,
+    })
+    // 100k fresh at 0.15 + 900k cached at 0.003 = 0.015 + 0.0027
+    assert.equal(Math.abs(cost - 0.0177) < 1e-9, true, String(cost))
+    assert.equal(estimateCost({ model: 'unknown-model', usage: { inputTokens: 1 }, at: offPeak }), null)
+  })
+
+  check('cost is booked when the call happens, at that hour\'s rate', () => {
+    resetUsage()
+    const peak = new Date(Date.UTC(2026, 10, 23, 2, 0)) // Monday 02:00 UTC = peak
+    const quiet = new Date(Date.UTC(2026, 10, 23, 12, 0)) // Monday 12:00 UTC = off-peak
+    const usage = { inputTokens: 1_000_000, cacheReadTokens: 0, outputTokens: 0 }
+    noteUsage({ mode: 'compose', model: 'deepseek-flash', usage, at: quiet })
+    const afterQuiet = usageSnapshot({}).lifetime.costMicro
+    noteUsage({ mode: 'compose', model: 'deepseek-flash', usage, at: peak })
+    const afterPeak = usageSnapshot({}).lifetime.costMicro
+    // off-peak 1M input = 0.15 USD = 150000 micro; peak = 0.30 USD = 300000 micro
+    assert.equal(afterQuiet, 150_000)
+    assert.equal(afterPeak - afterQuiet, 300_000)
+  })
+
+  check('a model with no price counts as uncosted, not as free', () => {
+    resetUsage()
+    noteUsage({ mode: 'compose', model: 'mystery-model', usage: { inputTokens: 10, outputTokens: 5 } })
+    const snap = usageSnapshot({})
+    assert.equal(snap.lifetime.calls, 1)
+    assert.equal(snap.lifetime.costMicro, 0)
+    assert.equal(snap.lifetime.uncosted, 1)
+    assert.equal(snap.lifetime.input, 10)
+  })
+
+  check('void and uncosted are different things', () => {
+    resetUsage()
+    noteUsage({ mode: 'compose', model: 'deepseek-flash', usage: null })
+    noteUsage({ mode: 'compose', model: 'mystery-model', usage: { inputTokens: 10 } })
+    const snap = usageSnapshot({})
+    assert.equal(snap.lifetime.calls, 2)
+    assert.equal(snap.lifetime.void, 1, 'the call with no usage is void')
+    assert.equal(snap.lifetime.uncosted, 1, 'only the unpriced model is uncosted')
+    // the priced model must not be marked uncosted by the neighbouring void call
+    assert.equal(snap.byModel['deepseek-flash'].uncosted, 0)
+  })
+
+  check('reset zeroes everything', () => {
+    noteUsage({ mode: 'compose', model: 'deepseek-flash', usage: { inputTokens: 5 } })
+    resetUsage()
+    const snap = usageSnapshot({})
+    assert.equal(snap.lifetime.calls, 0)
+    assert.equal(snap.lifetime.input, 0)
+    assert.deepEqual(snap.byMode, {})
+    assert.equal(snap.today.calls, 0)
+    assert.equal(snap.session.calls, 0)
+  })
+}
+
+  check('cost reads in CNY at the rate carried by the table', () => {
+    const { formatCost } = globalThis.__ghostFactory.factory((name) => {
+      if (name === 'react') return fakeReact
+      throw new Error(`unexpected require(${name})`)
+    }).__test
+    assert.equal(formatCost(0), '¥0')
+    // 1350 micro-USD at 7.1 -> 0.009'585 CNY
+    assert.equal(formatCost(1350), '¥0.0096')
+    assert.equal(formatCost(1_000_000), '¥7.10')
+    assert.equal(formatCost(1350, 7), '¥0.0095')
+  })
+
 const summary = [
   '',
   `${passed} passed`,

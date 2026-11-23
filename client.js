@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement
 
     const NS = 'composer-quill'
-    const BUILD = '0.31.48'
+    const BUILD = '0.31.49'
     const ROUTE = '/composer-quill/predict'
     const BEACON = '/composer-quill/beacon'
     /** The browser's own language, used when the Host has no style profile. */
@@ -83,6 +83,16 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.section.pace': '节奏',
       'settings.section.keys': '键盘',
       'settings.section.learning': '学习',
+      'settings.section.usage': '消耗',
+      'usage.today': '今天',
+      'usage.session': '本会话',
+      'usage.lifetime': '累计',
+      'usage.uncosted': '未计价',
+      'usage.price': '按价目',
+      'usage.holidayNote': '节假日按工作日计价',
+      'usage.reset': '重置累计',
+      'usage.loading': '读取中…',
+      'usage.failed': '读取失败',
       'settings.next': '下一句',
       'settings.compose': '补写',
       'settings.mode': '模式',
@@ -120,6 +130,16 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.section.pace': 'Timing',
       'settings.section.keys': 'Keyboard',
       'settings.section.learning': 'Learning',
+      'settings.section.usage': 'Usage',
+      'usage.today': 'Today',
+      'usage.session': 'This Session',
+      'usage.lifetime': 'Lifetime',
+      'usage.uncosted': 'Not priced',
+      'usage.price': 'Priced',
+      'usage.holidayNote': 'holidays billed as weekdays',
+      'usage.reset': 'Reset',
+      'usage.loading': 'Loading…',
+      'usage.failed': 'Load failed',
       'settings.next': 'Next message',
       'settings.compose': 'Completion',
       'settings.mode': 'Mode',
@@ -237,6 +257,18 @@ const COVERED_DEBOUNCE_MS = 1200
       } finally {
         try { await reader.cancel() } catch { /* already closed */ }
       }
+    }
+
+    /** The usage ledger for the settings panel (no model call). */
+    async function fetchUsage(sessionId, signal) {
+      const body = await callRoute('/composer-quill/usage', { sessionId }, signal)
+      return body !== null && typeof body === 'object' ? body : null
+    }
+
+    /** Zero the lifetime totals. */
+    async function resetUsageTotals(signal) {
+      const body = await callRoute('/composer-quill/usage', { reset: true }, signal)
+      return body !== null && typeof body === 'object' ? body : null
     }
 
     /** The user's own past messages for this Session (no model call). */
@@ -417,6 +449,24 @@ const COVERED_DEBOUNCE_MS = 1200
       if (event === null || typeof event !== 'object') return false
       if (event.key !== 'Tab') return false
       return event.shiftKey !== true && event.altKey !== true && event.ctrlKey !== true && event.metaKey !== true
+    }
+
+    /** 1234 -> "1.2k", 1200000 -> "1.2M". Below 1000 stays exact. */
+    function formatTokens(value) {
+      const number = Number(value) || 0
+      if (number < 1000) return String(number)
+      if (number < 1_000_000) return `${(number / 1000).toFixed(number < 10_000 ? 1 : 0)}k`
+      return `${(number / 1_000_000).toFixed(1)}M`
+    }
+
+    /** Micro-USD -> "$0.0042". Sub-cent values keep four decimals. */
+    /** Micro-USD in the ledger -> CNY for display. The rate travels with the table. */
+    function formatCost(micro, cnyPerUsd = 7.1) {
+      const cny = ((Number(micro) || 0) / 1_000_000) * (Number(cnyPerUsd) || 7.1)
+      if (cny === 0) return '¥0'
+      if (cny < 0.01) return `¥${cny.toFixed(4)}`
+      if (cny < 1) return `¥${cny.toFixed(3)}`
+      return `¥${cny.toFixed(2)}`
     }
 
     /**
@@ -2816,6 +2866,85 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     /** Settings → General: on/off, automatic or manual, pause and timeout. */
+    /** The 消耗 group: today, lifetime, and a reset. */
+    function UsagePanel(props) {
+      const { t } = props
+      const sessionId = typeof props.sessionId === 'string' ? props.sessionId : ''
+      const [snap, setSnap] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+      const [failed, setFailed] = React.useState(null)
+
+      const reload = React.useCallback(() => {
+        const controller = new AbortController()
+        fetchUsage(sessionId, controller.signal)
+          .then((body) => { setSnap(body); setFailed(body === null ? 'empty body' : null) })
+          .catch((error) => setFailed(String(error?.message ?? error).slice(0, 120)))
+        return () => controller.abort()
+      }, [sessionId])
+
+      React.useEffect(() => reload(), [reload])
+
+      const rate = snap?.price?.cnyPerUsd ?? 7.1
+      const line = (label, bucket) => h('div', {
+        style: { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px', minHeight: '26px' },
+      },
+      h('span', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: '12px' } }, label),
+      h('span', { style: { color: 'var(--dsw-alias-label-primary)', fontSize: '12px', fontVariantNumeric: 'tabular-nums' } },
+        bucket === null || bucket === undefined
+          ? '—'
+          : `${bucket.calls} 次 · ${formatTokens(bucket.input)} 入 · ${formatTokens(bucket.output)} 出 · ${formatCost(bucket.costMicro, rate)}`))
+
+      if (snap === null) {
+        return h('div', {
+          'data-composer-quill': 'usage-panel',
+          style: { color: 'var(--dsw-alias-label-tertiary, #8a8f98)', fontSize: '11px' },
+        }, failed === null ? t('usage.loading') : `${t('usage.failed')}：${failed}`)
+      }
+
+      const uncosted = snap.lifetime?.uncosted ?? 0
+      const rows = [
+        line(t('usage.today'), snap.today),
+        sessionId === '' ? null : line(t('usage.session'), snap.session),
+        line(t('usage.lifetime'), snap.lifetime),
+      ].filter(Boolean)
+
+      return h('div', {
+        'data-composer-quill': 'usage-panel',
+        style: { display: 'flex', flexDirection: 'column' },
+      },
+      ...rows,
+      uncosted > 0
+        ? h('div', { style: { color: 'var(--dsw-alias-label-tertiary, #8a8f98)', fontSize: '11px', marginTop: '2px' } },
+          `${t('usage.uncosted')}：${uncosted}`)
+        : null,
+      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginTop: '6px' } },
+        h('span', { style: { color: 'var(--dsw-alias-label-tertiary, #8a8f98)', fontSize: '11px' } },
+          `${t('usage.price')} ${snap.price?.asOf ?? ''} · ${t('usage.holidayNote')}`),
+        h('button', {
+          type: 'button',
+          'data-composer-quill': 'usage-reset',
+          disabled: busy,
+          onClick: () => {
+            setBusy(true)
+            resetUsageTotals()
+              .then((body) => { if (body !== null) setSnap(body) })
+              .catch((error) => setFailed(String(error?.message ?? error).slice(0, 120)))
+              .finally(() => setBusy(false))
+          },
+          style: {
+            flex: 'none',
+            height: '24px',
+            padding: '0 10px',
+            borderRadius: '6px',
+            border: '1px solid var(--dsw-alias-border-l2)',
+            background: 'transparent',
+            color: 'var(--dsw-alias-label-secondary)',
+            font: '12px/16px var(--dsw-font-sans, system-ui, sans-serif)',
+            cursor: busy ? 'default' : 'pointer',
+          },
+        }, t('usage.reset'))))
+    }
+
     function GhostSettingsRow(props) {
       const { t } = props
       const config = props.config ?? defaultConfig()
@@ -2934,7 +3063,10 @@ const COVERED_DEBOUNCE_MS = 1200
         section(t('settings.section.keys')),
         h('div', { style: hintStyle }, t('settings.manualHint')),
 
-        section(t('settings.section.learning')),
+        section(t('settings.section.usage')),
+      h(UsagePanel, { t, sessionId: props.sessionId }),
+
+      section(t('settings.section.learning')),
         h('div', { style: hintStyle }, `${t('settings.learning')}：${learningText}`))
     }
 
@@ -3029,6 +3161,6 @@ const COVERED_DEBOUNCE_MS = 1200
     }
 
     report('module', { detail: String((window.location && window.location.pathname) || '') })
-    return { inject, apply, __test: { isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
+    return { inject, apply, __test: { formatTokens, formatCost, isAcceptKey, claimBlocksRetrigger, statusChipKind, gateFor, createGhostStore, dockReducer, createDockBooking, describeAnnouncement, usableItems, followRemainder, bestHistoryMatch, normalizeConfig, saveSuggestion, loadSuggestion, readSuggestions, clearSessionSuggestions, streamRoute, featuresOf, rankByLearning, recordOutcome, learningSummary, proposalIsStale, inFlightCovers, transcriptVersion, epochOf, bumpEpoch, syncEpoch } }
   },
 })
