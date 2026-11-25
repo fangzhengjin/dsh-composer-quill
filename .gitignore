@@ -39,3 +39,5 @@ __pycache__/
 !screenshots.json
 # 抖动记账：本地状态，不进仓库
 dev/flake-ledger.json
+# 提示词 A/B 的运行产物：每次覆盖，不进仓库
+dev/ab-prompt-last.json
