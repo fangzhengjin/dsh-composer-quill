@@ -1176,11 +1176,16 @@ await checkAsync('trailing newline still yields a tail proposal', async () => {
     const draft = '帮我看下这个报错\n'
     renderDock(props({ session: { sessionId: 's-nl', running: false }, input: { draft } }))
     for (const run of effectQueue) run()
+    // Wait for *this* case's answer. Stopping at the first 'ready' accepted a leftover
+    // result from an earlier case (their requests were still landing) and then asserted
+    // against that stale draft — the "old draft + new tail" failure.
     for (let i = 0; i < 40; i += 1) {
       await wait(50)
-      if (face.ghost.getSnapshot().phase === 'ready') break
+      const now = face.ghost.getSnapshot()
+      if (now.phase === 'ready' && now.sessionId === 's-nl') break
     }
     const snapshot = face.ghost.getSnapshot()
+    assert.equal(snapshot.sessionId, 's-nl', `stale session: ${snapshot.sessionId}`)
     assert.equal(snapshot.items[0], '帮我看下这个报错，请附上完整日志。', `items=${JSON.stringify(snapshot.items)}`)
 
     effectQueue = []

@@ -1,24 +1,30 @@
-## 未解：跨用例的「旧草稿 + 新尾巴」
+## 已查清：跨用例的「旧草稿 + 新尾巴」
 
-有个失败反复出现过一次：`trailing newline` 那条断言拿到 `items=["帮我把这段日志，请附上完整日志。"]`——草稿前缀来自**上一个用例**，尾巴是本用例流式返回的。
+现象是 `trailing newline` 那条断言拿到 `items=["帮我把这段日志，请附上完整日志。"]`——草稿前缀来自别的用例，尾巴是本用例的流式返回。
 
-已排除：
+**根因：等待条件写错了。**
 
-| 猜测 | 结论 |
-| --- | --- |
-| `__predictRoute` 被重复设置 | 否，两个版本里都是 `set`，没变过 |
-| `effectQueue` 残留 | 否，清成 0 之后照样失败 |
-| 上一个用例留下的在途请求写回 | 否，让假 fetch 认 `init.signal` 之后照样失败 |
-| `clear()` 没清流式暂存（`streamBase`/`acc`） | 已补，仍失败 |
+```js
+for (let i = 0; i < 40; i += 1) {
+  await wait(50)
+  if (face.ghost.getSnapshot().phase === 'ready') break   // ← 太松
+}
+```
 
-能确定的是：慢用例结束时 ghost store 已被清空（`phase=idle draft="" items=[]`），但下一个用例仍然拼出旧草稿。也就是说旧草稿不是从 store 恢复的，而是**在第二个用例自己的请求里被当成 `forDraft` 用的**。
+`phase === 'ready'` 说明「store 里有东西」，不说明「是本用例的东西」。前面几个用例的请求还在陆续到达，其中一个先把 store 写成 ready，循环立刻 break，随后断言读到的就是那条遗留结果。
 
-要往下查，需要在下一次渲染时打印 `streamStart` 的入参和 `props()` 的产物，看是谁先把旧草稿传进去。在那之前：
+现在等的是自己的会话：
 
-- 一个用例结束前，把它发出去的请求等回来，可以避开这个坑
-- 看到「草稿来自别的用例」这种失败，先怀疑夹具，而不是产品逻辑
+```js
+const now = face.ghost.getSnapshot()
+if (now.phase === 'ready' && now.sessionId === 's-nl') break
+```
 
-`honourSignal()` 这个包装已经保留：它让假 fetch 像真的一样响应 abort，即使这个特例不是它造成的。
+并加了一条 `assert.equal(snapshot.sessionId, 's-nl')`，下次再串台会直接说是谁的。
+
+排查时逐个排除过：`__predictRoute` 重复设置（否，两个版本都是 `set`）、`effectQueue` 残留（清成 0 照样失败）、在途请求写回（让假 fetch 认 `init.signal` 后照样失败）、`clear()` 暂存泄漏（已补，仍失败）。真正定位靠的是把 `streamStart` 入参打出来——日志里能看到 `s-chip`、`s-inflight` 这两个**更早的**会话在断言之前依次开会话。
+
+教训：测试里「等到某个状态」要等到**属于本次的那个状态**，光看状态名不够。
 
 ## 探针
 
