@@ -654,6 +654,11 @@ const COVERED_DEBOUNCE_MS = 1200
           const current = store.getSnapshot()
           if (sessionId !== undefined && current.sessionId !== null && current.sessionId !== sessionId) return
           cancel()
+          // The streaming scratch space outlives the snapshot: without this the next
+          // result is composed onto the draft that was cleared ("old draft + new tail").
+          acc = ''
+          streamMode = 'full'
+          streamBase = ''
           store.set(IDLE)
         },
         /**

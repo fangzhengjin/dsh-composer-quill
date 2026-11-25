@@ -38,6 +38,45 @@ const matches = (name) => filter === null || filter.test(name)
 // and the storage full, and the next case then failed for the wrong reason.
 let fixtureReset = () => {}
 
+const abortFailure = (signal) => {
+  const reason = signal?.reason
+  if (reason instanceof Error) return reason
+  const error = new Error('The operation was aborted')
+  error.name = 'AbortError'
+  return error
+}
+
+/**
+ * A fake fetch that rejects when its signal aborts, like the real one. Without this a
+ * stub kept its promise and answered into the next case — the "old draft, new tail"
+ * failure that looked like a product bug but was the fixture.
+ */
+const honourSignal = (impl) => (url, init) => {
+  const signal = init?.signal
+  const promise = Promise.resolve().then(() => impl(url, init))
+  if (signal === undefined || signal === null) return promise
+  if (signal.aborted) return Promise.reject(abortFailure(signal))
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(abortFailure(signal)), { once: true })
+    }),
+  ])
+}
+
+// Every later `globalThis.fetch = …` goes through the wrapper, so a case cannot forget.
+{
+  let current = typeof globalThis.fetch === 'function' ? honourSignal(globalThis.fetch) : globalThis.fetch
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    get: () => current,
+    set: (impl) => {
+      current = typeof impl === 'function' ? honourSignal(impl) : impl
+    },
+  })
+}
+
+
 const resetFixtures = () => {
   try {
     fixtureReset()
