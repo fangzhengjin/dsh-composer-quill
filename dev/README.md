@@ -1,3 +1,21 @@
+## 夹具的一处局限
+
+单测里的假 `fetch` **不理会 `init.signal`**。真机上 `ghost.clear()` 会 abort 在途请求，所以「Esc 或清空草稿之后迟到的回答」写不进状态；夹具里那个 Promise 照样 resolve，于是上一个用例遗留的请求可能写进共享的 ghost store，让**下一个**用例拿着旧草稿失败。
+
+复现方式：在一个用例里发出请求、不等它返回就结束，紧接着跑「trailing newline」那条断言。
+
+```
+FAIL trailing newline still yields a tail proposal:
+  items=["帮我把这段日志，请附上完整日志。"]     ← 草稿来自上一个用例
+```
+
+`d1a6ea3` 与当前版本都会这样失败，**与「用例重置」无关**——这不是产品缺陷：`clear()` 在 `client.js` 里确实调用了 `cancel()` → `controller.abort()`。
+
+要根治，得让各用例自己写的 fetch 桩判断 `init.signal.aborted` 并 reject。在那之前记着两点：
+
+- 一个用例结束前，把它发出去的请求等回来
+- 看到「草稿来自别的用例」这种失败，先怀疑这条，而不是产品逻辑
+
 ## 探针
 
 三个小工具，用来在**不连真机**的情况下看清行为。它们不是测试，不会进 CI。
