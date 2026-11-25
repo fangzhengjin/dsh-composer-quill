@@ -2418,6 +2418,19 @@ group('host: budget')
 {
   const { maxTokensFor } = host.__test
 
+  check('the answer budget grows with the thinking intensity', () => {
+    const { capFor } = host.__test
+    assert.equal(capFor('compose', 'off'), 384)
+    assert.equal(capFor('compose', 'low'), 576)
+    assert.equal(capFor('compose', 'high'), 960)
+    assert.equal(capFor('compose', 'max'), 1536)
+    assert.equal(capFor('rewrite', 'max'), 3072, 'a long draft keeps its extra room')
+    assert.equal(capFor('next', 'off'), 384)
+    assert.equal(capFor('compose', 'nonsense'), 384, 'an unknown effort costs the least')
+    assert.equal(capFor('compose', undefined), 384)
+    assert.equal(capFor('compose', 'max') <= 4096, true, 'never above the ceiling')
+  })
+
   check('the output cap follows the shape of the answer', () => {
     assert.equal(maxTokensFor('next'), 384)
     assert.equal(maxTokensFor('compose'), 384)

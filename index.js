@@ -89,6 +89,21 @@ const MAX_TOKENS_BY_MODE = Object.freeze({ next: 384, compose: 384, sentence: 38
 function maxTokensFor(mode) {
   return MAX_TOKENS_BY_MODE[mode] ?? MAX_TOKENS_BY_MODE.compose
 }
+
+/**
+ * Thinking costs budget before a single word of the answer exists: a model asked for
+ * 'max' will not fit in the flat cap, so the first call would be wasted on an empty
+ * reply. These multipliers give the harder settings the room they need.
+ */
+const EFFORT_BUDGET_FACTOR = Object.freeze({ off: 1, low: 1.5, high: 2.5, max: 4 })
+const MAX_BUDGET_TOKENS = 4096
+
+/** The answer budget for this shape of reply at this thinking intensity. */
+function capFor(mode, effort) {
+  const base = maxTokensFor(mode)
+  const factor = EFFORT_BUDGET_FACTOR[effort] ?? 1
+  return Math.min(Math.round(base * factor), MAX_BUDGET_TOKENS)
+}
 // A cache key already contains the Session, the transcript version, the model, the
 // language and the browser's turn counter: if all of that is unchanged the answer is
 // still the answer, and re-sampling it costs money for nothing. Two minutes covers the
@@ -1357,7 +1372,7 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
     return out
   }
 
-  const cap = maxTokensFor(mode)
+  const cap = capFor(mode, effort)
   let attempt
   try {
     attempt = await runStream({ reasoningEffort: effort === REASONING_EFFORT_OFF || effort === undefined ? REASONING_EFFORT_OFF : effort, maxTokens: cap })
@@ -1371,7 +1386,7 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
     // The effort was ignored or not available: the model thought until the budget ran
     // out. One retry with room to finish both the thought and the answer.
     trace('budget-eaten-by-thinking', { model: route.model, maxTokens: cap })
-    attempt = await runStream({ reasoningEffort: effort, maxTokens: Math.min(cap * 4, 4096) })
+    attempt = await runStream({ reasoningEffort: effort, maxTokens: Math.min(cap * 4, MAX_BUDGET_TOKENS) })
   }
   text = attempt.text
   finish = attempt.finish
@@ -2368,7 +2383,7 @@ export function apply(ctx) {
 }
 
 /** Pure helpers exposed for the offline smoke test. */
-export const __test = { handleModels, produceCompose, maxTokensFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
+export const __test = { handleModels, produceCompose, maxTokensFor, capFor, handleUsage, usageSnapshot, noteUsage, usageSnapshot, resetUsage, estimateCost, isPeak, emptyUsage, loadUsage, flushUsage, usageLedgerPath, cacheFile, loadCache, rotateLog, LOG_MAX_BYTES, buildShortDraftPrompt, eventsOf, resolveLanguage, wrongLanguage, latinShareOf, groundedness, MIN_GROUNDEDNESS, styleProfile, rankCandidates, looksLikeMeta, isPunctuationOnly, scriptOf, sessionDigest, size: () => cache.size, shorten, parseCandidates, parseComposed, parseComposeReply, parseSentence, joinSentence, transcriptOf, historyOf, maskSecrets, cleanLine, authorized, isLoopbackHost, lastAssistantText, cacheKey, composePrompt, remember, cached, fresh, CACHE_TTL_MS, CACHE_CAPACITY, preflight }
 
 
 
