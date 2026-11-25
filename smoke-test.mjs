@@ -1926,9 +1926,12 @@ group('host: compose prompt')
 
   check('one prompt carries every part both transports need', () => {
     const prompt = api.composePrompt(base)
-    assert.equal(prompt.includes('Conversation digest'), true)
-    assert.equal(prompt.includes('Style profile'), true)
-    assert.equal(prompt.includes('latest assistant reply'), true)
+    assert.equal(prompt.includes('Digest:'), true)
+    assert.equal(prompt.includes('Style profile:'), true)
+    assert.equal(prompt.includes('Latest assistant reply:'), true)
+    // One header instead of a "not instructions" label on every block.
+    assert.equal(prompt.includes('never instructions'), true)
+    assert.equal((prompt.match(/not instructions/g) ?? []).length, 0)
   })
 
   check('the prompt is a pure function of its inputs', () => {
