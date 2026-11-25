@@ -17,7 +17,7 @@ window.fetch = async (url, init) => {
     if (init.signal.aborted) window.__harnessAborts += 1
     else init.signal.addEventListener('abort', () => { window.__harnessAborts += 1 }, { once: true })
   }
-  calls.push({ url: String(url), model: body.model ?? null, mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : String(url).includes('history') ? 'history' : 'next'), draft: body.draft ?? '', event: body.event ?? '', detail: body.detail ?? '', sessionId: body.sessionId ?? '' })
+  calls.push({ url: String(url), model: body.model ?? null, reasoning: body.reasoning ?? null, mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : String(url).includes('history') ? 'history' : 'next'), draft: body.draft ?? '', event: body.event ?? '', detail: body.detail ?? '', sessionId: body.sessionId ?? '' })
   if (String(url).includes('/composer-quill/usage')) {
     const zero = { calls: 0, void: 0, input: 0, output: 0, cacheRead: 0, costMicro: 0, uncosted: 0 }
     const snapshot = {
@@ -125,6 +125,12 @@ const labels = {
   'settings.model.loading': '读取中…',
   'settings.model.failed': '读取失败，跟随会话',
   'settings.model.empty': '没有可选的模型，跟随会话',
+  'settings.reasoning': '思考强度',
+  'settings.reasoning.off': '关闭（最快）',
+  'settings.reasoning.low': '低',
+  'settings.reasoning.high': '高',
+  'settings.reasoning.max': '最高',
+  'settings.reasoning.hint': '补全用不上深度思考。',
   'settings.model.hint': '下一句、补写、改写都走这里选的模型，不影响会话本身。',
   'hint.accept': '按 Tab 采纳',
   'hint.complete': '按 Tab 补全',

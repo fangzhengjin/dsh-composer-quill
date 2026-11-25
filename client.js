@@ -91,6 +91,12 @@ const COVERED_DEBOUNCE_MS = 1200
   'settings.model.failed': '读取失败，跟随会话',
   'settings.model.empty': '没有可选的模型，跟随会话',
   'settings.model.hint': '下一句、补写、改写都走这里选的模型，不影响会话本身。',
+  'settings.reasoning': '思考强度',
+  'settings.reasoning.off': '关闭（最快）',
+  'settings.reasoning.low': '低',
+  'settings.reasoning.high': '高',
+  'settings.reasoning.max': '最高',
+  'settings.reasoning.hint': '补全用不上深度思考；调高会更慢、更贵，但复杂改写可能更准。',
       'usage.today': '今天',
       'usage.session': '本会话',
       'usage.lifetime': '累计',
@@ -145,6 +151,12 @@ const COVERED_DEBOUNCE_MS = 1200
   'settings.model.failed': 'Could not load; following the session',
   'settings.model.empty': 'No models offered; following the session',
   'settings.model.hint': 'Next message, completion and rewrite all use this model. The session is untouched.',
+  'settings.reasoning': 'Thinking',
+  'settings.reasoning.off': 'Off (fastest)',
+  'settings.reasoning.low': 'Low',
+  'settings.reasoning.high': 'High',
+  'settings.reasoning.max': 'Max',
+  'settings.reasoning.hint': 'Completions rarely need deep thinking; higher is slower and dearer, though a tangled rewrite may land better.',
       'usage.today': 'Today',
       'usage.session': 'This Session',
       'usage.lifetime': 'Lifetime',
@@ -211,6 +223,7 @@ const COVERED_DEBOUNCE_MS = 1200
           language: currentConfig().language,
           epoch: syncEpoch(payload.sessionId),
           model: currentConfig().modelRoute,
+          reasoning: currentConfig().reasoning,
         }),
         signal,
         credentials: 'same-origin',
@@ -310,7 +323,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const response = await fetch(path, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ ...payload, model: currentConfig().modelRoute, locale: browserLocale(), language: payload.draft === '' ? currentConfig().language : 'auto' }),
+        body: JSON.stringify({ ...payload, model: currentConfig().modelRoute, reasoning: currentConfig().reasoning, locale: browserLocale(), language: payload.draft === '' ? currentConfig().language : 'auto' }),
         signal,
         credentials: 'same-origin',
       })
@@ -734,6 +747,7 @@ const COVERED_DEBOUNCE_MS = 1200
       debounceMs: COMPOSE_DEBOUNCE_MS,
       timeoutMs: 20000,
       modelRoute: null,   // { provider, model } or null: follow the session
+      reasoning: 'off',   // 'off' | 'low' | 'high' | 'max'
     })
 
     /** Coerce anything we find in storage into a usable configuration. */
@@ -754,6 +768,7 @@ const COVERED_DEBOUNCE_MS = 1200
         debounceMs: clamp(source.debounceMs, 80, 2000, DEFAULT_CONFIG.debounceMs),
         timeoutMs: clamp(source.timeoutMs, 3000, 60000, DEFAULT_CONFIG.timeoutMs),
         modelRoute: normalizeModelRoute(source.modelRoute),
+        reasoning: normalizeReasoning(source.reasoning),
       }
     }
 
@@ -766,6 +781,12 @@ const COVERED_DEBOUNCE_MS = 1200
       const provider = typeof value.provider === 'string' ? value.provider.trim() : ''
       const model = typeof value.model === 'string' ? value.model.trim() : ''
       return provider !== '' && model !== '' ? { provider, model } : null
+    }
+
+    /** A thinking intensity this plugin can ask for; anything else means off. */
+    function normalizeReasoning(value) {
+      const effort = typeof value === 'string' ? value.trim().toLowerCase() : ''
+      return ['off', 'low', 'high', 'max'].includes(effort) ? effort : 'off'
     }
 
     /** The configuration in force right now (storage is the source of truth). */
@@ -3151,6 +3172,19 @@ const COVERED_DEBOUNCE_MS = 1200
 
         section(t('settings.section.model')),
         row(t('settings.model'), h(ModelPicker, { t, config })),
+        row(t('settings.reasoning'), h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+          h('select', {
+            'data-composer-quill': 'settings-reasoning',
+            'aria-label': t('settings.reasoning'),
+            value: settings.reasoning,
+            onChange: (event) => config.set({ reasoning: event.target.value }),
+            style: { ...fieldStyle, width: '260px' },
+          },
+            h('option', { value: 'off' }, t('settings.reasoning.off')),
+            h('option', { value: 'low' }, t('settings.reasoning.low')),
+            h('option', { value: 'high' }, t('settings.reasoning.high')),
+            h('option', { value: 'max' }, t('settings.reasoning.max'))),
+          h('div', { style: hintStyle }, t('settings.reasoning.hint')))),
 
         section(t('settings.section.pace')),
         row(t('settings.debounce'), h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },

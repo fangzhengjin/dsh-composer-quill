@@ -305,6 +305,151 @@ check('a one-character draft is asked for a full short sentence', () => {
     req.emit('end')
   })
 
+  await checkAsync('the chosen thinking intensity reaches the model call', async () => {
+    const seen = []
+    const { produceCompose } = host.__test
+    const session = {
+      id: 's-eff',
+      requestHeader: () => ({ config: { provider: 'p', model: 'm' } }),
+      snapshotEvents: () => [],
+    }
+    const ctx = {
+      get: () => undefined,
+      agents: { get: () => ({ session }) },
+      llm: {
+        async *stream(options) {
+          seen.push(options.reasoningEffort)
+          yield { type: 'text-delta', text: '，顺便说下是哪个接口超时。' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      },
+    }
+    const events = [
+      { type: 'request/header', data: { header: { config: { provider: 'p', model: 'm' } } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '帮我把这段日志整理一下' }] } },
+      { type: 'assistant/message', data: { content: [{ type: 'text', text: '好的，我看看。' }] } },
+    ]
+    const base = {
+      sessionId: 's-eff',
+      session,
+      events,
+      draft: '帮我看下这个报错',
+      send: () => {},
+      locale: 'zh-CN',
+      forced: '',
+      signal: new AbortController().signal,
+    }
+    await produceCompose(ctx, { ...base, key: 'eff-1', route: { reasoningEffort: 'high' } })
+    assert.equal(seen[0], 'high', String(seen[0]))
+    await produceCompose(ctx, { ...base, key: 'eff-2', route: { reasoningEffort: 'nonsense' } })
+    assert.equal(seen[1], 'off', 'an unknown effort falls back to off')
+    await produceCompose(ctx, { ...base, key: 'eff-3' })
+    assert.equal(seen[2], 'off', 'no setting means off')
+  })
+
+  await checkAsync('suggestions ask for no thinking, and recover when it happens anyway', async () => {
+    const seen = []
+    const { produceCompose } = host.__test
+    const session = {
+      id: 's-effort',
+      requestHeader: () => ({ config: { provider: 'p', model: 'thinking-model' } }),
+      snapshotEvents: () => [],
+    }
+    let call = 0
+    const ctx = {
+      get: () => undefined,
+      agents: { get: () => ({ session }) },
+      llm: {
+        async *stream(options) {
+          call += 1
+          seen.push({ effort: options.reasoningEffort, maxTokens: options.maxTokens })
+          if (call === 1) {
+            // first call: the model thinks until the budget runs out and says nothing
+            yield { type: 'usage', usage: { inputTokens: 100, outputTokens: options.maxTokens } }
+            yield { type: 'finish', reason: { kind: 'max-tokens' } }
+            return
+          }
+          yield { type: 'text-delta', text: '，顺便说下是哪个接口超时。' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      },
+    }
+    const events = [
+      { type: 'request/header', data: { header: { config: { provider: 'p', model: 'thinking-model' } } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '帮我把这段日志整理一下' }] } },
+      { type: 'assistant/message', data: { content: [{ type: 'text', text: '好的，我看看。' }] } },
+    ]
+    const sent = []
+    await produceCompose(ctx, {
+      sessionId: 's-effort',
+      session,
+      events,
+      draft: '帮我看下这个报错',
+      key: 'effort-test-1',
+      send: (event, data) => sent.push({ event, data }),
+      locale: 'zh-CN',
+      forced: '',
+      signal: new AbortController().signal,
+    })
+    assert.equal(seen.length, 2, 'the empty attempt should be retried once')
+    assert.equal(seen[0].effort, 'off', 'the first call asks for no thinking')
+    assert.equal(seen[1].maxTokens > seen[0].maxTokens, true, 'the retry gets more room')
+    assert.equal(seen[1].effort, 'off', 'the retry keeps the cheap effort')
+    const final = sent.find((item) => item.event === 'final')
+    assert.ok(final && String(final.data.text).includes('接口超时'), JSON.stringify(sent.slice(-2)))
+  })
+
+  await checkAsync('the model in the request is the model the Host calls', async () => {
+    const seen = []
+    const { produceCompose } = host.__test
+    const session = {
+      id: 's-route',
+      requestHeader: () => ({ config: { provider: 'session-provider', model: 'session-model' } }),
+      snapshotEvents: () => [],
+    }
+    const ctx = {
+      get: () => undefined,
+      agents: { get: () => ({ session }) },
+      llm: {
+        async *stream(options) {
+          seen.push({ provider: options.provider, model: options.model })
+          yield { type: 'text-delta', text: '，顺便说下是哪个接口超时。' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      },
+    }
+    const events = [
+      { type: 'request/header', data: { header: { config: { provider: 'session-provider', model: 'session-model' } } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '帮我把这段日志整理一下' }] } },
+      { type: 'assistant/message', data: { content: [{ type: 'text', text: '好的，我看看。' }] } },
+    ]
+    const base = {
+      sessionId: 's-route',
+      session,
+      events,
+      draft: '帮我看下这个报错',
+      send: () => {},
+      locale: 'zh-CN',
+      forced: '',
+      signal: new AbortController().signal,
+    }
+
+    await produceCompose(ctx, { ...base, key: 'route-test-1', route: { provider: 'chosen-provider', model: 'chosen-model' } })
+    assert.equal(seen.length > 0, true, 'no call was made')
+    assert.equal(seen[0].provider, 'chosen-provider', JSON.stringify(seen[0]))
+    assert.equal(seen[0].model, 'chosen-model', JSON.stringify(seen[0]))
+
+    seen.length = 0
+    await produceCompose(ctx, { ...base, key: 'route-test-2' })
+    assert.equal(seen[0].provider, 'session-provider', 'without an override the session route wins')
+    assert.equal(seen[0].model, 'session-model')
+
+    // A malformed override is ignored, not fatal.
+    seen.length = 0
+    await produceCompose(ctx, { ...base, key: 'route-test-3', route: { provider: '', model: '' } })
+    assert.equal(seen[0].provider, 'session-provider', 'a broken override falls back to the session')
+  })
+
   await checkAsync('compose falls back to an appended sentence when the model says unchanged', async () => {
     call = 0
     const { status, body } = await request({ sessionId: 's-fake', mode: 'compose', draft })
@@ -821,12 +966,12 @@ check('hydrate shows a stored suggestion without a request', () => {
 
 check('normalizeConfig clamps and defaults every field', () => {
   const { normalizeConfig } = moduleExports.__test
-  assert.deepEqual(normalizeConfig(null), { nextEnabled: true, composeEnabled: true, mode: 'auto', language: 'auto', debounceMs: 120, timeoutMs: 20000, modelRoute: null })
+  assert.deepEqual(normalizeConfig(null), { nextEnabled: true, composeEnabled: true, mode: 'auto', language: 'auto', debounceMs: 120, timeoutMs: 20000, modelRoute: null, reasoning: 'off' })
   assert.equal(normalizeConfig({ language: 'zh' }).language, 'zh')
   assert.equal(normalizeConfig({ language: 'klingon' }).language, 'auto')
   // A single legacy flag means "both were off".
   assert.deepEqual(normalizeConfig({ enabled: false, mode: 'manual', debounceMs: 9999, timeoutMs: 10 }),
-    { nextEnabled: false, composeEnabled: false, mode: 'manual', language: 'auto', debounceMs: 2000, timeoutMs: 3000, modelRoute: null })
+    { nextEnabled: false, composeEnabled: false, mode: 'manual', language: 'auto', debounceMs: 2000, timeoutMs: 3000, modelRoute: null, reasoning: 'off' })
   // Per-feature flags win over the legacy one, and each keeps its own value.
   assert.deepEqual(
     (({ nextEnabled, composeEnabled }) => ({ nextEnabled, composeEnabled }))(normalizeConfig({ enabled: false, composeEnabled: true })),
@@ -834,6 +979,15 @@ check('normalizeConfig clamps and defaults every field', () => {
   )
   assert.deepEqual(normalizeConfig({ mode: 'nonsense', debounceMs: 'abc' }).mode, 'auto')
   assert.equal(normalizeConfig({ debounceMs: '150' }).debounceMs, 150)
+})
+
+check('a thinking intensity is kept only when it is one we can ask for', () => {
+  const { normalizeConfig } = moduleExports.__test
+  assert.equal(normalizeConfig({ reasoning: 'high' }).reasoning, 'high')
+  assert.equal(normalizeConfig({ reasoning: 'MAX' }).reasoning, 'max')
+  assert.equal(normalizeConfig({ reasoning: 'extreme' }).reasoning, 'off')
+  assert.equal(normalizeConfig({ reasoning: 7 }).reasoning, 'off')
+  assert.equal(normalizeConfig({}).reasoning, 'off', 'default costs the least')
 })
 
 check('a stored model route survives only when it is complete', () => {

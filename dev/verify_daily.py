@@ -1072,8 +1072,39 @@ def main() -> int:
             )
         h("type('')")
 
+        # ---- S47 思考强度：选项可读，选完后请求带上档位
+        thinking = page.locator('[data-composer-quill="settings-reasoning"]')
+        record("S47 设置里有思考强度", thinking.count() > 0, f"个数={thinking.count()}")
+        if thinking.count() > 0:
+            labels = thinking.locator("option").all_inner_texts()
+            thinking.select_option("high")
+            page.wait_for_timeout(300)
+            stored_reasoning = page.evaluate(
+                "() => JSON.parse(localStorage.getItem('dsh.composer-quill.config') || '{}').reasoning"
+            )
+            record("S47 选择后写入配置", stored_reasoning == "high", f"选项={labels} 存下={stored_reasoning}")
+            h("type('')")
+            page.evaluate("() => window.__harness.setSession('s47')")
+            page.wait_for_timeout(200)
+            before_asked = len([c for c in h("calls") if c.get("mode") == "compose"])
+            page.focus("[data-composer-input]")
+            h("typeLive('帮我看看这个报错', {delay: 20})")
+            page.wait_for_timeout(2500)
+            # calls 是整场累积的：只看这次设置之后发出的请求
+            asked = [c for c in h("calls") if c.get("mode") == "compose"][before_asked:]
+            record(
+                "S47 请求带上思考档位",
+                bool(asked) and asked[-1].get("reasoning") == "high",
+                f"新增 {len(asked)} 条，档位={asked[-1].get('reasoning') if asked else None}",
+            )
+            # 回到默认，免得影响后面的用例
+            thinking.select_option("off")
+            page.wait_for_timeout(200)
+        h("type('')")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
+
         browser.close()
 
     failed = [name for name, ok, _ in results if not ok]

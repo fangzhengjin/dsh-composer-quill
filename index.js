@@ -79,6 +79,10 @@ const MAX_TOKENS = 512
 // Measured output (usage-call): next 166–254 tokens, compose up to 377. A cap below
 // that truncates the JSON and the suggestion silently disappears, so these sit above
 // the observed peak while still stopping a runaway answer.
+/** Suggestions never need a thinking pass: it costs latency and the whole budget. */
+const REASONING_EFFORT_OFF = 'off'
+/** What deepseek declares; anything else is dropped rather than forwarded. */
+const REASONING_EFFORTS = Object.freeze(['off', 'low', 'high', 'max'])
 const MAX_TOKENS_BY_MODE = Object.freeze({ next: 384, compose: 384, sentence: 384, rewrite: 768 })
 
 /** The cap for this call. The caller says which kind of answer it expects. */
@@ -650,6 +654,12 @@ function routeOf(config) {
   const provider = config.provider.trim()
   const model = config.model.trim()
   return provider !== '' && model !== '' ? { provider, model } : undefined
+}
+
+/** A thinking intensity, or undefined when the value is unknown or absent. */
+function effortOf(value) {
+  const effort = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  return REASONING_EFFORTS.includes(effort) ? effort : undefined
 }
 
 function latestRoute(events) {
@@ -1280,59 +1290,92 @@ async function ask(ctx, session, events, system, prompt, signal, onDelta, mode =
   // is the point: a cheap model for cheap suggestions.
   const overrideRoute = routeOf(override)
   const route = overrideRoute ?? routeOf(session?.requestHeader?.()?.config) ?? latestRoute(events) ?? defaultRoute(ctx)
+  // 'auto' (or a missing value) means "send nothing and let the model decide".
+  const effort = effortOf(override?.reasoningEffort) ?? REASONING_EFFORT_OFF
   if (route === undefined) throw httpError('No model route is available for this Session', 409)
   if (overrideRoute !== undefined) trace('model-override', { provider: overrideRoute.provider, model: overrideRoute.model })
+  if (effortOf(override?.reasoningEffort) !== undefined) trace('reasoning-setting', { effort })
   let text = ''
   let finish
   let usage = null
   // Billing depends on when the call happened (peak/off-peak), so take the stamp
   // before the stream is created, not when the last chunk arrives.
   const startedAt = Date.now()
-  const stream = ctx.llm.stream({
-    provider: route.provider,
-    model: route.model,
-    system,
-    maxTokens: maxTokensFor(mode),
-    messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-    sessionId: session?.id ?? session?.sessionId,
-    signal,
-  })
-  const iterator = stream[Symbol.asyncIterator]()
-  let aborted = null
-  // One listener for the whole call. Adding one per chunk leaked a listener per
-  // model token (83 on a single 80-chunk stream) and spammed
-  // MaxListenersExceededWarning into the Host log.
-  let wake = () => {}
-  const abortRace = new Promise((resolve) => { wake = () => resolve({ aborted: true }) })
-  const onAbort = () => {
-    aborted = signal.reason ?? cancelled()
-    wake()
-  }
-  if (signal.aborted) onAbort()
-  else signal.addEventListener('abort', onAbort, { once: true })
-  try {
-    for (;;) {
-      // Await the abort as well as the next chunk: a provider that connects and
-      // then goes silent would otherwise hold this loop (and the cache entry)
-      // until the process dies.
-      const step = await Promise.race([iterator.next(), abortRace])
-      if (step?.aborted === true) throw aborted ?? cancelled()
-      if (step.done) break
-      const chunk = step.value
-      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
-        text += chunk.text
-        if (typeof onDelta === 'function') onDelta(chunk.text)
-      } else if (chunk?.type === 'block-end' && chunk.block?.type === 'text' && text === '') {
-        text = typeof chunk.block.text === 'string' ? chunk.block.text : ''
-        if (text !== '' && typeof onDelta === 'function') onDelta(text)
-      } else if (chunk?.type === 'usage') usage = chunk.usage ?? null
-      else if (chunk?.type === 'finish') finish = chunk.reason
-      if (text.length > MAX_NORMALIZED_CHARS + 2000) break
+  /**
+   * One stream, collected. Thinking models can spend the whole budget before saying
+   * anything (deepseek-v4-pro did: output=384, finish=max-tokens, no text), so the
+   * caller may ask for a cheap effort and retry when that is refused or useless.
+   */
+  const runStream = async ({ reasoningEffort, maxTokens }) => {
+    const out = { text: '', finish: undefined, usage: null }
+    const stream = ctx.llm.stream({
+      provider: route.provider,
+      model: route.model,
+      system,
+      maxTokens,
+      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+      sessionId: session?.id ?? session?.sessionId,
+      signal,
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    })
+    const iterator = stream[Symbol.asyncIterator]()
+    let aborted = null
+    // One listener for the whole call. Adding one per chunk leaked a listener per
+    // model token (83 on a single 80-chunk stream) and spammed
+    // MaxListenersExceededWarning into the Host log.
+    let wake = () => {}
+    const abortRace = new Promise((resolve) => { wake = () => resolve({ aborted: true }) })
+    const onAbort = () => {
+      aborted = signal.reason ?? cancelled()
+      wake()
     }
-  } finally {
-    signal.removeEventListener('abort', onAbort)
-    try { await iterator.return?.() } catch { /* already closed */ }
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      for (;;) {
+        // Await the abort as well as the next chunk: a provider that connects and
+        // then goes silent would otherwise hold this loop (and the cache entry)
+        // until the process dies.
+        const step = await Promise.race([iterator.next(), abortRace])
+        if (step?.aborted === true) throw aborted ?? cancelled()
+        if (step.done) break
+        const chunk = step.value
+        if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
+          out.text += chunk.text
+          if (typeof onDelta === 'function') onDelta(chunk.text)
+        } else if (chunk?.type === 'block-end' && chunk.block?.type === 'text' && out.text === '') {
+          out.text = typeof chunk.block.text === 'string' ? chunk.block.text : ''
+          if (out.text !== '' && typeof onDelta === 'function') onDelta(out.text)
+        } else if (chunk?.type === 'usage') out.usage = chunk.usage ?? null
+        else if (chunk?.type === 'finish') out.finish = chunk.reason
+        if (out.text.length > MAX_NORMALIZED_CHARS + 2000) break
+      }
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+      try { await iterator.return?.() } catch { /* already closed */ }
+    }
+    return out
   }
+
+  const cap = maxTokensFor(mode)
+  let attempt
+  try {
+    attempt = await runStream({ reasoningEffort: effort === REASONING_EFFORT_OFF || effort === undefined ? REASONING_EFFORT_OFF : effort, maxTokens: cap })
+  } catch (error) {
+    const message = String(error?.message ?? error)
+    if (!/reasoning|effort|unsupported|invalid/i.test(message) || signal.aborted) throw error
+    trace('reasoning-off-rejected', { model: route.model, message: message.slice(0, 120) })
+    attempt = await runStream({ maxTokens: cap })
+  }
+  if (attempt.text.trim() === '' && attempt.finish?.kind === 'max-tokens') {
+    // The effort was ignored or not available: the model thought until the budget ran
+    // out. One retry with room to finish both the thought and the answer.
+    trace('budget-eaten-by-thinking', { model: route.model, maxTokens: cap })
+    attempt = await runStream({ reasoningEffort: effort, maxTokens: Math.min(cap * 4, 4096) })
+  }
+  text = attempt.text
+  finish = attempt.finish
+  usage = attempt.usage
   // An empty reply used to look like "the model had nothing to say". Usually it means
   // the budget ran out before the first token, so record the cap alongside it.
   if (typeof text === 'string' && text.trim() === '' && finish?.kind !== 'error') {
@@ -2001,11 +2044,16 @@ async function handlePredict(ctx, token, req, res) {
     const epoch = Number.isFinite(body?.epoch) ? Math.max(0, Math.trunc(body.epoch)) : 0
     // Settings → 续笔 → 模型: a route of the plugin's own. Anything malformed is
     // ignored rather than rejected — a bad setting must not break completion.
-    const route = routeOf(body?.model)
+    const pickedRoute = routeOf(body?.model)
+    const reasoning = effortOf(body?.reasoning)
+    // One object threaded everywhere it already went: the route, the effort, or both.
+    const route = pickedRoute === undefined && reasoning === undefined
+      ? undefined
+      : { ...(pickedRoute ?? {}), ...(reasoning === undefined ? {} : { reasoningEffort: reasoning }) }
     const mode = body?.mode === 'compose' || body?.mode === 'normalize' || body?.mode === 'continuation'
       ? 'compose'
       : 'next'
-    trace('request', { sessionId, mode, draftChars: draft.length, model: route?.model ?? null })
+    trace('request', { sessionId, mode, draftChars: draft.length, model: route?.model ?? null, reasoning: route?.reasoningEffort ?? null })
     const wantsStream = mode === 'compose'
       && typeof req.headers.accept === 'string'
       && req.headers.accept.includes('text/event-stream')
