@@ -38,7 +38,7 @@ npm install                      # 首次：react / react-dom / esbuild
 node node_modules/esbuild/bin/esbuild src.js --bundle --format=iife --target=chrome120 --outfile=bundle.js
 
 cd ..
-python verify_daily.py           # 49 个场景，全绿即通过
+python verify_daily.py           # 55 个场景，全绿即通过
 ```
 
 模拟器页面通过 `file://` 打开，`src.js` 里 `await import('../../client.js')` 直接引用**插件源码**，所以改完 `client.js` 必须重新构建 bundle，否则跑的是旧代码（这是本仓库最容易踩的坑）。
