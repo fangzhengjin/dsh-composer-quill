@@ -1831,9 +1831,11 @@ const COVERED_DEBOUNCE_MS = 1200
             })
             .catch((error) => {
               if (cancelled || controller.signal.aborted) return
-              if (error?.status !== 409 || attempt >= 6) return
+              if (error?.status !== 409 || attempt >= 3) return
               attempt += 1
-              retry = setTimeout(load, Math.min(15000, 700 * 2 ** (attempt - 1)))
+              // Three tries over ~17s: a session that is about to become live does so
+              // quickly, and six tries per mount turned into dozens of 409s a day.
+              retry = setTimeout(load, [1000, 4000, 12000][attempt - 1] ?? 12000)
             })
         }
         load()

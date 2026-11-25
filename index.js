@@ -2229,9 +2229,10 @@ async function handleHistory(ctx, token, req, res) {
   timeout.unref?.()
   const onClose = () => { if (!res.writableEnded) controller.abort(cancelled()) }
   res.on('close', onClose)
+  let sessionId = ''
   try {
     const body = await readJson(req, controller.signal)
-    const sessionId = typeof body?.sessionId === 'string' ? body.sessionId.trim() : ''
+    sessionId = typeof body?.sessionId === 'string' ? body.sessionId.trim() : ''
     if (sessionId === '') {
       respond(res, 400, { error: { code: 'invalid-request', message: 'sessionId is required' } })
       return
@@ -2249,7 +2250,8 @@ async function handleHistory(ctx, token, req, res) {
       return
     }
     const statusCode = typeof error?.statusCode === 'number' ? error.statusCode : 500
-    trace('history-error', { statusCode, message: error instanceof Error ? error.message : String(error) })
+    // Without the session id these lines were useless: 82 of them said only "not live".
+    trace('history-error', { sessionId, statusCode, message: error instanceof Error ? error.message : String(error) })
     respond(res, statusCode, {
       error: {
         code: 'history-failed',
