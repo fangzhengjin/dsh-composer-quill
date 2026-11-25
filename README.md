@@ -1,6 +1,8 @@
 # 续笔 · dsh-composer-quill
 
-DSH 输入框的补全插件。回合结束时给几条「下一句」，你打字停一下就把后半句接上。`Tab` 采用，`Esc` 忽略；发送还是你自己按。
+DSH 输入框的补全插件。[English](README.en.md)
+
+回合结束时给几条「下一句」，你打字停一下就把后半句接上。`Tab` 采用，`Esc` 忽略；发送还是你自己按。
 
 ![下一句：输入框为空时给出候选，提示条上标着第几条](docs/assets/real-next.png)
 
@@ -130,6 +132,8 @@ npm test -- --list                # 列出全部用例名
 
 - `request` / `cache-hit` / `cache-miss`：有没有真的调用模型；miss 会记下键的各个成分。
 - `result`：返回了几条候选；失败原因是 `skipped` / `empty-thread` / `wrong-language`。
+- `empty-reply`：模型一个字都没返回，带当时的输出上限与 `finish` 原因。
+- `model-override` / `reasoning-setting`：设置里选的模型与思考档位确实生效了。
 - `hydrated`：复用了存储里的建议。
 - `next-ungrounded` / `next-empty`：候选与会话无关 / 一条都没剩下。
 - `dock-state`：界面那一刻的完整状态——阶段、候选数、草稿是否为空。

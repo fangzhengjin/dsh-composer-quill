@@ -1,0 +1,48 @@
+name: Feature request
+description: Something the plugin should do, or should do differently
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the situation first. A request that starts from "when I do X, I have to Y" is much easier to act on than a feature name.
+
+  - type: textarea
+    id: situation
+    attributes:
+      label: The situation
+      description: What were you doing, and where does the current behaviour get in the way?
+      placeholder: When I paste a long log into the composer, the suggestion covers it instead of…
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like instead
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part
+      options:
+        - Next message
+        - Completion while typing
+        - Rewrite
+        - History completion
+        - Keys and shortcuts
+        - Settings
+        - Usage panel
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried or considered
+      description: Including "I turned it off" — that is useful information.
+    validations:
+      required: false

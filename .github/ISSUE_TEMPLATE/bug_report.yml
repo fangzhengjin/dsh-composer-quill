@@ -1,0 +1,74 @@
+name: Bug report
+description: Something did not work — no suggestion, a wrong one, or the plugin broke the composer
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The two log lines below settle most cases without any back-and-forth.
+
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: Settings → Quill shows it, or run `npm view dsh-composer-quill version`
+      placeholder: 0.31.56
+    validations:
+      required: true
+
+  - type: input
+    id: dsh
+    attributes:
+      label: DSH version
+      placeholder: 0.2.2-rc.5
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong
+      options:
+        - No suggestion at all
+        - A suggestion appeared but it was wrong or useless
+        - A suggestion appeared at the wrong moment
+        - Tab / Esc / arrow keys did not behave
+        - The composer itself broke (layout, caret, IME)
+        - Settings did not stick
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you typed, what you expected, what appeared instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: The relevant log lines
+      description: |
+        `~/.dsh/composer-quill.log`, one JSON object per line. The useful ones:
+
+        - `empty-reply` — the model returned nothing; shows the cap and finish reason
+        - `result` — how many candidates came back and why they were dropped
+        - `usage-call` — which model ran and how many tokens it used
+        - `error` / `compose-stream-error` / `history-error` — the failures
+
+        Paste the lines around the moment it went wrong. They contain no drafts, prompts or credentials.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: model
+    attributes:
+      label: Which model was selected
+      description: Leave blank if it follows the Session
+      placeholder: deepseek-flash / follows the session
+    validations:
+      required: false
