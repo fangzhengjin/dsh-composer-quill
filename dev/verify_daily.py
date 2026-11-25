@@ -1035,6 +1035,43 @@ def main() -> int:
             f"重置后={(after or '')[:80]!r}",
         )
 
+        # ---- S46 设置里选的模型会随请求发给宿主（issue #4）
+        page.evaluate("() => window.__harness.setSession('s46')")
+        page.wait_for_timeout(200)
+        h("showSettings()")
+        page.wait_for_timeout(600)
+        model_select = page.locator('[data-composer-quill="settings-model"]')
+        record(
+            "S46 设置里有模型选择器",
+            model_select.count() > 0,
+            f"个数={model_select.count()}",
+        )
+        if model_select.count() > 0:
+            options = model_select.locator("option").all_inner_texts()
+            model_select.select_option("deepseek::v4-flash")
+            page.wait_for_timeout(300)
+            stored = page.evaluate(
+                "() => JSON.parse(localStorage.getItem('dsh.composer-quill.config') || '{}').modelRoute"
+            )
+            record(
+                "S46 选择后写入配置",
+                stored == {"provider": "deepseek", "model": "v4-flash"},
+                f"选项={options} 存下={stored}",
+            )
+            h("type('')")
+            page.evaluate("() => window.__harness.setSession('s46-b')")
+            page.wait_for_timeout(200)
+            page.focus("[data-composer-input]")
+            h("typeLive('帮我看下这个报错', {delay: 20})")
+            page.wait_for_timeout(2500)
+            sent = [c for c in h("calls") if c.get("mode") == "compose"]
+            record(
+                "S46 请求带上所选模型",
+                bool(sent) and sent[0].get("model") == {"provider": "deepseek", "model": "v4-flash"},
+                f"请求={sent[0].get('model') if sent else None}",
+            )
+        h("type('')")
+
         record("S9 无页面异常", not errors, f"errors={errors[:2]}")
         page.screenshot(path="daily-final.png")
         browser.close()

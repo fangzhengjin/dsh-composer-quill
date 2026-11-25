@@ -166,3 +166,21 @@ x-composer-quill-token: <token>     // 页面存在 token 时
 2. **`final` 永远是权威值**：客户端可以只用 delta 做预览，但最终显示必须来自 `final`。
 3. **`done` 必须发**：客户端在流结束但没收到 `done` 时按失败处理（防止半截建议被当成结果）。
 4. 状态码语义不得复用：409 专指「会话未就绪」，不要拿来表示模型错误。
+
+## 5. `GET|POST /composer-quill/models`
+
+给设置页的「模型」下拉用。读的是宿主自己的路由表，不调模型。
+
+```json
+{
+  "providers": [
+    { "id": "deepseek", "name": "DeepSeek", "models": [{ "id": "v4-flash", "name": "V4 Flash" }] }
+  ],
+  "fetchedAt": "2026-11-25T10:00:00.000Z"
+}
+```
+
+- 每个 provider 单独 try/catch：一个 provider 的 `listModels` 抛错只让该条为空，不会让整个列表失败
+- 结果缓存 60 秒；失败时清空缓存，下次重新读
+- 请求体可以带同样的 `model` 字段：`{ "provider": "deepseek", "model": "v4-flash" }`，宿主会优先用它，字段不合法则忽略
+

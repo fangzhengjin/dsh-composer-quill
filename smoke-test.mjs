@@ -821,12 +821,12 @@ check('hydrate shows a stored suggestion without a request', () => {
 
 check('normalizeConfig clamps and defaults every field', () => {
   const { normalizeConfig } = moduleExports.__test
-  assert.deepEqual(normalizeConfig(null), { nextEnabled: true, composeEnabled: true, mode: 'auto', language: 'auto', debounceMs: 120, timeoutMs: 20000 })
+  assert.deepEqual(normalizeConfig(null), { nextEnabled: true, composeEnabled: true, mode: 'auto', language: 'auto', debounceMs: 120, timeoutMs: 20000, modelRoute: null })
   assert.equal(normalizeConfig({ language: 'zh' }).language, 'zh')
   assert.equal(normalizeConfig({ language: 'klingon' }).language, 'auto')
   // A single legacy flag means "both were off".
   assert.deepEqual(normalizeConfig({ enabled: false, mode: 'manual', debounceMs: 9999, timeoutMs: 10 }),
-    { nextEnabled: false, composeEnabled: false, mode: 'manual', language: 'auto', debounceMs: 2000, timeoutMs: 3000 })
+    { nextEnabled: false, composeEnabled: false, mode: 'manual', language: 'auto', debounceMs: 2000, timeoutMs: 3000, modelRoute: null })
   // Per-feature flags win over the legacy one, and each keeps its own value.
   assert.deepEqual(
     (({ nextEnabled, composeEnabled }) => ({ nextEnabled, composeEnabled }))(normalizeConfig({ enabled: false, composeEnabled: true })),
@@ -834,6 +834,15 @@ check('normalizeConfig clamps and defaults every field', () => {
   )
   assert.deepEqual(normalizeConfig({ mode: 'nonsense', debounceMs: 'abc' }).mode, 'auto')
   assert.equal(normalizeConfig({ debounceMs: '150' }).debounceMs, 150)
+})
+
+check('a stored model route survives only when it is complete', () => {
+  const { normalizeConfig } = moduleExports.__test
+  assert.equal(normalizeConfig({ modelRoute: { provider: 'deepseek', model: 'v4-flash' } }).modelRoute.model, 'v4-flash')
+  assert.equal(normalizeConfig({ modelRoute: { provider: 'deepseek' } }).modelRoute, null)
+  assert.equal(normalizeConfig({ modelRoute: { provider: '  ', model: 'x' } }).modelRoute, null)
+  assert.equal(normalizeConfig({ modelRoute: 'deepseek/v4' }).modelRoute, null)
+  assert.equal(normalizeConfig({}).modelRoute, null, 'default follows the session')
 })
 
 check('settings row renders the mode, pause and timeout controls', () => {
@@ -2148,6 +2157,34 @@ group('host: usage')
     assert.equal(isPeak(monday(11)), false)
     const sunday = new Date(Date.UTC(2026, 10, 22, 2, 30))
     assert.equal(isPeak(sunday), false)
+  })
+
+  check('the model list comes from the Host and is cached', async () => {
+    const { handleModels } = moduleExports.__test
+    let listed = 0
+    const ctx = {
+      llm: {
+        listProviders() {
+          listed += 1
+          return [{ id: 'deepseek', name: 'DeepSeek' }, { id: 'broken' }]
+        },
+        async listModels(provider) {
+          if (provider === 'broken') throw new Error('no adapter')
+          return [{ id: 'v4-flash', name: 'V4 Flash' }, { id: '', name: 'nameless' }]
+        },
+      },
+    }
+    const res = makeRes()
+    await handleModels(ctx, 'test-token', makeReq({ token: 'test-token' }), res)
+    assert.equal(res.statusCode, 200)
+    const body = JSON.parse(res.body)
+    assert.equal(body.providers.length, 2)
+    assert.equal(body.providers[0].models.length, 1, 'nameless entries are dropped')
+    assert.equal(body.providers[0].models[0].id, 'v4-flash')
+    assert.equal(body.providers[1].models.length, 0, 'a provider that throws is empty, not fatal')
+    // second call is served from the cache
+    await handleModels(ctx, 'test-token', makeReq({ token: 'test-token' }), makeRes())
+    assert.equal(listed, 1, 'listProviders ran once')
   })
 
   check('cost uses the cache-hit rate for cached input', () => {

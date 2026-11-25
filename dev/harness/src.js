@@ -17,7 +17,7 @@ window.fetch = async (url, init) => {
     if (init.signal.aborted) window.__harnessAborts += 1
     else init.signal.addEventListener('abort', () => { window.__harnessAborts += 1 }, { once: true })
   }
-  calls.push({ url: String(url), mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : String(url).includes('history') ? 'history' : 'next'), draft: body.draft ?? '', event: body.event ?? '', detail: body.detail ?? '', sessionId: body.sessionId ?? '' })
+  calls.push({ url: String(url), model: body.model ?? null, mode: body.mode ?? (String(url).includes('beacon') ? 'beacon' : String(url).includes('history') ? 'history' : 'next'), draft: body.draft ?? '', event: body.event ?? '', detail: body.detail ?? '', sessionId: body.sessionId ?? '' })
   if (String(url).includes('/composer-quill/usage')) {
     const zero = { calls: 0, void: 0, input: 0, output: 0, cacheRead: 0, costMicro: 0, uncosted: 0 }
     const snapshot = {
@@ -31,6 +31,18 @@ window.fetch = async (url, init) => {
     }
     if (body.reset === true) return { ok: true, status: 200, json: async () => ({ ok: true, ...snapshot, lifetime: zero, today: zero, session: zero }) }
     return { ok: true, status: 200, json: async () => snapshot }
+  }
+  if (String(url).includes('/composer-quill/models')) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        providers: [
+          { id: 'deepseek', name: 'DeepSeek', models: [{ id: 'v4-flash', name: 'V4 Flash' }] },
+          { id: 'local', name: 'Local', models: [{ id: 'small', name: 'Small' }] },
+        ],
+      }),
+    }
   }
   if (String(url).includes('/composer-quill/history')) {
     return {
@@ -107,6 +119,13 @@ window.fetch = async (url, init) => {
 window.__DSH_COMPOSER_QUILL_TOKEN__ = 'harness-token'
 
 const labels = {
+  'settings.section.model': '模型',
+  'settings.model': '建议用哪个模型',
+  'settings.model.follow': '跟随当前会话',
+  'settings.model.loading': '读取中…',
+  'settings.model.failed': '读取失败，跟随会话',
+  'settings.model.empty': '没有可选的模型，跟随会话',
+  'settings.model.hint': '下一句、补写、改写都走这里选的模型，不影响会话本身。',
   'hint.accept': '按 Tab 采纳',
   'hint.complete': '按 Tab 补全',
   'hint.replace': '按 Tab 采用改写',

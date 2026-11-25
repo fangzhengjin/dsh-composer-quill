@@ -84,6 +84,13 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.section.keys': '键盘',
       'settings.section.learning': '学习',
       'settings.section.usage': '消耗',
+  'settings.section.model': '模型',
+  'settings.model': '建议用哪个模型',
+  'settings.model.follow': '跟随当前会话',
+  'settings.model.loading': '读取中…',
+  'settings.model.failed': '读取失败，跟随会话',
+  'settings.model.empty': '没有可选的模型，跟随会话',
+  'settings.model.hint': '下一句、补写、改写都走这里选的模型，不影响会话本身。',
       'usage.today': '今天',
       'usage.session': '本会话',
       'usage.lifetime': '累计',
@@ -131,6 +138,13 @@ const COVERED_DEBOUNCE_MS = 1200
       'settings.section.keys': 'Keyboard',
       'settings.section.learning': 'Learning',
       'settings.section.usage': 'Usage',
+  'settings.section.model': 'Model',
+  'settings.model': 'Model for suggestions',
+  'settings.model.follow': 'Follow the current session',
+  'settings.model.loading': 'Loading…',
+  'settings.model.failed': 'Could not load; following the session',
+  'settings.model.empty': 'No models offered; following the session',
+  'settings.model.hint': 'Next message, completion and rewrite all use this model. The session is untouched.',
       'usage.today': 'Today',
       'usage.session': 'This Session',
       'usage.lifetime': 'Lifetime',
@@ -196,6 +210,7 @@ const COVERED_DEBOUNCE_MS = 1200
           locale: browserLocale(),
           language: currentConfig().language,
           epoch: syncEpoch(payload.sessionId),
+          model: currentConfig().modelRoute,
         }),
         signal,
         credentials: 'same-origin',
@@ -265,6 +280,19 @@ const COVERED_DEBOUNCE_MS = 1200
       return body !== null && typeof body === 'object' ? body : null
     }
 
+    /** Which providers and models this installation can reach (no model call). */
+    async function fetchModels(signal) {
+      const body = await callRoute('/composer-quill/models', {}, signal)
+      const providers = Array.isArray(body?.providers) ? body.providers : []
+      return providers
+        .filter((provider) => typeof provider?.id === 'string' && Array.isArray(provider.models))
+        .map((provider) => ({
+          id: provider.id,
+          name: typeof provider.name === 'string' ? provider.name : provider.id,
+          models: provider.models.filter((model) => typeof model?.id === 'string'),
+        }))
+    }
+
     /** Zero the lifetime totals. */
     async function resetUsageTotals(signal) {
       const body = await callRoute('/composer-quill/usage', { reset: true }, signal)
@@ -282,7 +310,7 @@ const COVERED_DEBOUNCE_MS = 1200
       const response = await fetch(path, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ ...payload, locale: browserLocale(), language: payload.draft === '' ? currentConfig().language : 'auto' }),
+        body: JSON.stringify({ ...payload, model: currentConfig().modelRoute, locale: browserLocale(), language: payload.draft === '' ? currentConfig().language : 'auto' }),
         signal,
         credentials: 'same-origin',
       })
@@ -705,6 +733,7 @@ const COVERED_DEBOUNCE_MS = 1200
     language: 'auto',    // 'auto' (follow the system) | 'zh' | 'en'
       debounceMs: COMPOSE_DEBOUNCE_MS,
       timeoutMs: 20000,
+      modelRoute: null,   // { provider, model } or null: follow the session
     })
 
     /** Coerce anything we find in storage into a usable configuration. */
@@ -724,7 +753,19 @@ const COVERED_DEBOUNCE_MS = 1200
       language: source.language === 'zh' || source.language === 'en' ? source.language : 'auto',
         debounceMs: clamp(source.debounceMs, 80, 2000, DEFAULT_CONFIG.debounceMs),
         timeoutMs: clamp(source.timeoutMs, 3000, 60000, DEFAULT_CONFIG.timeoutMs),
+        modelRoute: normalizeModelRoute(source.modelRoute),
       }
+    }
+
+    /**
+     * A stored model route, or null to follow the session. Anything malformed is
+     * dropped rather than repaired: a bad value must not break completion.
+     */
+    function normalizeModelRoute(value) {
+      if (value === null || typeof value !== 'object') return null
+      const provider = typeof value.provider === 'string' ? value.provider.trim() : ''
+      const model = typeof value.model === 'string' ? value.model.trim() : ''
+      return provider !== '' && model !== '' ? { provider, model } : null
     }
 
     /** The configuration in force right now (storage is the source of truth). */
@@ -2945,6 +2986,82 @@ const COVERED_DEBOUNCE_MS = 1200
         }, t('usage.reset'))))
     }
 
+    /**
+     * Settings → 续笔 → 模型. The list comes from the Host, so it only offers routes
+     * this installation can actually reach. Selecting nothing keeps the old
+     * behaviour: suggestions use whatever the session uses.
+     */
+    function ModelPicker(props) {
+      const { t } = props
+      const config = props.config ?? defaultConfig()
+      // GhostSettingsRow defines these inside its own body; this component renders
+      // before it, so it carries its own copies rather than reaching across.
+      const hintStyle = { color: 'var(--dsw-alias-label-tertiary, #8a8f98)', fontSize: '11px', lineHeight: '17px' }
+      const fieldStyle = {
+        background: 'var(--dsw-alias-bg-layer-1)',
+        color: 'var(--dsw-alias-label-primary)',
+        border: '1px solid var(--dsw-alias-border-l2)',
+        borderRadius: '6px',
+        padding: '4px 8px',
+        fontSize: '13px',
+        lineHeight: '20px',
+      }
+      const [providers, setProviders] = React.useState(null)
+      const [failed, setFailed] = React.useState(false)
+      const [value, setValue] = React.useState(() => currentConfig().modelRoute)
+
+      React.useEffect(() => {
+        const controller = new AbortController()
+        fetchModels(controller.signal)
+          .then((list) => setProviders(list))
+          .catch(() => setFailed(true))
+        return () => controller.abort()
+      }, [])
+
+      const key = value === null ? '' : `${value.provider}::${value.model}`
+      const options = [h('option', { key: '', value: '' }, t('settings.model.follow'))]
+      for (const provider of providers ?? []) {
+        for (const model of provider.models) {
+          options.push(h('option', {
+            key: `${provider.id}::${model.id}`,
+            value: `${provider.id}::${model.id}`,
+          }, `${provider.name} · ${model.name}`))
+        }
+      }
+
+      const hint = failed
+        ? t('settings.model.failed')
+        : providers === null
+          ? t('settings.model.loading')
+          : providers.length === 0
+            ? t('settings.model.empty')
+            : t('settings.model.hint')
+      const disabled = providers === null || (providers.length === 0 && !failed)
+
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
+        h('select', {
+          'data-composer-quill': 'settings-model',
+          'aria-label': t('settings.model'),
+          value: key,
+          disabled,
+          onChange: (event) => {
+            const next = event.target.value
+            if (next === '') {
+              setValue(null)
+              config.set({ modelRoute: null })
+              return
+            }
+            const [provider, model] = next.split('::')
+            const route = normalizeModelRoute({ provider, model })
+            setValue(route)
+            config.set({ modelRoute: route })
+          },
+          style: { ...fieldStyle, width: '260px' },
+        }, options),
+        h('div', { style: hintStyle }, hint),
+      )
+    }
+
     function GhostSettingsRow(props) {
       const { t } = props
       const config = props.config ?? defaultConfig()
@@ -3031,6 +3148,9 @@ const COVERED_DEBOUNCE_MS = 1200
           h('option', { value: 'auto' }, `${t('settings.language.auto')}（${browserLocale() || 'zh'}）`),
           h('option', { value: 'zh' }, '中文'),
           h('option', { value: 'en' }, 'English'))),
+
+        section(t('settings.section.model')),
+        row(t('settings.model'), h(ModelPicker, { t, config })),
 
         section(t('settings.section.pace')),
         row(t('settings.debounce'), h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
