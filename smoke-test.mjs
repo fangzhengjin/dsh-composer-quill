@@ -34,6 +34,18 @@ const failures = [] // kept for the historical exit-code logic at the bottom
 
 const matches = (name) => filter === null || filter.test(name)
 
+// Runs after every case, pass or fail: one broken case used to leave the effect queue
+// and the storage full, and the next case then failed for the wrong reason.
+let fixtureReset = () => {}
+
+const resetFixtures = () => {
+  try {
+    fixtureReset()
+  } catch {
+    // A broken reset must not hide the failure that triggered it.
+  }
+}
+
 const record = (name, ok, detail, ms) => {
   if (!groupPrinted) {
     groupPrinted = true
@@ -65,6 +77,8 @@ const check = (name, fn) => {
     record(name, true, '', performance.now() - started)
   } catch (error) {
     record(name, false, error.message, performance.now() - started)
+  } finally {
+    resetFixtures()
   }
 }
 
@@ -77,6 +91,8 @@ const checkAsync = async (name, fn) => {
     record(name, true, '', performance.now() - started)
   } catch (error) {
     record(name, false, error.message, performance.now() - started)
+  } finally {
+    resetFixtures()
   }
 }
 
@@ -763,6 +779,26 @@ await import(pathToFileURL('./client.js').href)
 check('client registers a module factory', () => {
   assert.equal(globalThis.__ghostFactory.id, 'dsh-composer-quill')
 })
+
+// The client's own state lives inside the module it just built: a fresh factory call
+// per case would re-run all its module-level caches, but the slot components below are
+// already bound to one face. Clearing the stores is enough.
+fixtureReset = () => {
+  effectQueue = []
+  try {
+    window.localStorage.clear()
+  } catch {
+    // Nothing to clear.
+  }
+  try {
+    for (const entry of registered) {
+      const injected = entry.inject?.()
+      injected?.ghost?.clear?.()
+    }
+  } catch {
+    // Slots that are not mounted yet.
+  }
+}
 
 const moduleExports = globalThis.__ghostFactory.factory((name) => {
   if (name === 'react') return fakeReact
